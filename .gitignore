@@ -1,0 +1,38 @@
+# Research corpus (cloned reference repositories) — never commit
+.research/
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Rust / C++
+target/
+*.o
+*.dll
+*.so
+*.dylib
+
+# Python
+__pycache__/
+.venv/
+
+# Env & secrets
+.env
+.env.*
+*.key
+*.pem
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local tooling artifacts
+mitm_mcp_traffic.db
+review/

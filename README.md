@@ -1,0 +1,23 @@
+# drop-gse
+
+Automated peer-to-peer multiplayer over virtual mesh networks (Tailscale / ZeroTier)
+for the [Drop](https://github.com/Drop-OSS/drop) gaming platform — powered by
+Steam emulator wrappers (Goldberg-family forks) with managed orchestration from
+the Drop server.
+
+> **Status:** initial architecture audit. See
+> [`docs/architecture/SPECIFICATION.md`](docs/architecture/SPECIFICATION.md)
+> and [`docs/research/COMPARATIVE_ANALYSIS.md`](docs/research/COMPARATIVE_ANALYSIS.md).
+
+## Packages
+
+| Package | Role |
+| --- | --- |
+| `packages/drop-addon-server` | Drop server plugin: room orchestration, mesh token distribution, lobby registry |
+| `packages/drop-addon-client` | Drop client plugin: pre-launch hooks, VPN validation, post-exit teardown, UI extensions |
+| `packages/gse-engine` | Core emulator patcher: DLL manager, config generator, anti-cheat detection |
+
+## License
+
+GPL-3.0 — chosen for compatibility with the LGPL-3.0 licensed Goldberg-family
+emulator codebases (`gbe_fork`, `gse_fork`) this addon wraps.
