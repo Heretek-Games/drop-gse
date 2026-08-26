@@ -30,6 +30,11 @@ fn sha256_of(path: &Path) -> Result<String, EngineError> {
     Ok(format!("{:x}", Sha256::digest(&data)))
 }
 
+#[cfg(test)]
+fn sha256_hex(data: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(data))
+}
+
 fn manifest_path(game_dir: &Path) -> std::path::PathBuf {
     game_dir.join(MANIFEST_FILE)
 }
@@ -63,53 +68,111 @@ fn ensure_game_dir(game_dir: &Path) -> Result<(), EngineError> {
     }
 }
 
+/// Outcome of backing up a single binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupState {
+    /// A fresh backup of the original was created (or a stale one replaced).
+    BackedUp,
+    /// The binary is already patched relative to its recorded original and
+    /// the manifest-verified backup was left untouched — re-running the
+    /// patcher must never overwrite the good backup with patched content.
+    AlreadyPatched,
+}
+
+/// Result of [`backup_originals`] per binary name.
+#[derive(Debug, Default)]
+pub struct BackupOutcome {
+    pub states: std::collections::BTreeMap<String, BackupState>,
+}
+
+impl BackupOutcome {
+    pub fn state(&self, name: &str) -> Option<BackupState> {
+        self.states.get(name).copied()
+    }
+}
+
 /// Back up `binaries` inside `game_dir` as `<name>.orig`.
 ///
-/// An existing `.orig` is reused only when the manifest digest still matches
-/// both it and the live file; any other pre-existing `.orig` is treated as
-/// stale and overwritten. Returns the names of binaries that have a valid
-/// backup afterwards.
-pub fn backup_originals(game_dir: &Path, binaries: &[&str]) -> Result<Vec<String>, EngineError> {
+/// Semantics:
+/// - No manifest entry → back up the live file.
+/// - Manifest entry exists and the existing `.orig`'s digest matches it:
+///   - live file also matches → nothing to do (`BackedUp`, unchanged).
+///   - live file differs → the game is already patched; keep the verified
+///     original backup intact (`AlreadyPatched`). **Never** copy the patched
+///     binary over the good backup.
+/// - Manifest entry exists but the `.orig` is corrupt/stale (digest mismatch)
+///   → replace it with the live file.
+pub fn backup_originals(game_dir: &Path, binaries: &[&str]) -> Result<BackupOutcome, EngineError> {
     ensure_game_dir(game_dir)?;
     let mut manifest = load_manifest(game_dir)?;
-    let mut backed_up = Vec::new();
+    let mut outcome = BackupOutcome::default();
     for name in binaries {
         let src = game_dir.join(name);
+        if !std::fs::metadata(&src)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+        {
+            continue; // target not present in this layout
+        }
         let dst = game_dir.join(format!("{name}.orig"));
-        let meta = match std::fs::metadata(&src) {
-            Ok(m) if m.is_file() => m,
-            Ok(_) | Err(_) => continue, // target not present in this layout
-        };
-        let _ = meta;
         let live_digest = sha256_of(&src)?;
 
-        let reusable = manifest.entries.get(*name).is_some_and(|recorded| {
-            std::fs::metadata(&dst)
-                .map(|m| m.is_file())
-                .unwrap_or(false)
-                && sha256_of(&dst).is_ok_and(|d| d == *recorded && d == live_digest)
-        });
-
-        if !reusable {
-            std::fs::copy(&src, &dst)?;
-            let backup_digest = sha256_of(&dst)?;
-            manifest
-                .entries
-                .insert(name.to_string(), backup_digest);
+        match manifest.entries.get(*name) {
+            Some(recorded) => {
+                let backup_digest = sha256_of(&dst);
+                match backup_digest {
+                    // Verified backup + unmodified live file: idempotent no-op.
+                    Ok(d) if d == *recorded && live_digest == *recorded => {
+                        outcome
+                            .states
+                            .insert(name.to_string(), BackupState::BackedUp);
+                    }
+                    // Verified backup + modified live file: already patched —
+                    // preserve the original backup.
+                    Ok(d) if d == *recorded => {
+                        outcome
+                            .states
+                            .insert(name.to_string(), BackupState::AlreadyPatched);
+                    }
+                    // Corrupt/stale backup: replace it with the live file.
+                    _ => {
+                        std::fs::copy(&src, &dst)?;
+                        let backup_digest = sha256_of(&dst)?;
+                        manifest.entries.insert(name.to_string(), backup_digest);
+                        outcome
+                            .states
+                            .insert(name.to_string(), BackupState::BackedUp);
+                    }
+                }
+            }
+            None => {
+                std::fs::copy(&src, &dst)?;
+                let backup_digest = sha256_of(&dst)?;
+                manifest.entries.insert(name.to_string(), backup_digest);
+                outcome
+                    .states
+                    .insert(name.to_string(), BackupState::BackedUp);
+            }
         }
-        backed_up.push(name.to_string());
     }
     save_manifest(game_dir, &manifest)?;
-    Ok(backed_up)
+    Ok(outcome)
 }
 
 /// Restore `*.orig` backups created by [`backup_originals`] and remove them.
 ///
-/// Each backup's digest is verified against the manifest before anything is
-/// touched; a mismatch aborts the whole restore without modifying files.
+/// Phases, ordered so an interruption at any point is recoverable:
+/// 1. **Verify** every tracked backup's digest (nothing is modified).
+/// 2. **Copy** all verified backups over their destinations. A failure here
+///    leaves every `.orig` intact and the manifest unchanged.
+/// 3. **Clean up**: delete each `.orig` and persist the manifest immediately
+///    after each successful removal, so an interrupted cleanup resumes with
+///    only the remaining entries and never requires already-deleted backups.
 pub fn restore_originals(game_dir: &Path, binaries: &[&str]) -> Result<(), EngineError> {
     ensure_game_dir(game_dir)?;
-    let manifest = load_manifest(game_dir)?;
+    let mut manifest = load_manifest(game_dir)?;
+
+    // Phase 1: verify all tracked backups before touching anything.
     for name in binaries {
         let Some(recorded) = manifest.entries.get(*name) else {
             continue; // never backed up by us in this directory
@@ -128,7 +191,8 @@ pub fn restore_originals(game_dir: &Path, binaries: &[&str]) -> Result<(), Engin
             });
         }
     }
-    // All verified — safe to copy back and clean up.
+
+    // Phase 2: copy everything back. Backups are NOT removed yet.
     for name in binaries {
         if !manifest.entries.contains_key(*name) {
             continue;
@@ -136,9 +200,19 @@ pub fn restore_originals(game_dir: &Path, binaries: &[&str]) -> Result<(), Engin
         let dst = game_dir.join(name);
         let src = game_dir.join(format!("{name}.orig"));
         std::fs::copy(&src, &dst)?;
-        std::fs::remove_file(&src)?;
     }
-    save_manifest(game_dir, &Manifest::default())?;
+
+    // Phase 3: durable cleanup — remove one backup at a time and persist
+    // progress after each success.
+    for name in binaries {
+        if !manifest.entries.contains_key(*name) {
+            continue;
+        }
+        let src = game_dir.join(format!("{name}.orig"));
+        std::fs::remove_file(&src)?;
+        manifest.entries.remove(*name);
+        save_manifest(game_dir, &manifest)?;
+    }
     Ok(())
 }
 
@@ -158,8 +232,11 @@ mod tests {
         let dir = tmpdir("roundtrip");
         fs::write(dir.join("steam_api64.dll"), b"original-bytes").unwrap();
 
-        let backed = backup_originals(&dir, TARGET_BINARIES).unwrap();
-        assert!(backed.contains(&"steam_api64.dll".to_string()));
+        let outcome = backup_originals(&dir, TARGET_BINARIES).unwrap();
+        assert_eq!(
+            outcome.state("steam_api64.dll"),
+            Some(BackupState::BackedUp)
+        );
         assert!(dir.join("steam_api64.dll.orig").exists());
 
         // Simulate patching.
@@ -171,6 +248,50 @@ mod tests {
             b"original-bytes"
         );
         assert!(!dir.join("steam_api64.dll.orig").exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn second_run_preserves_backup_of_patched_binary() {
+        let dir = tmpdir("rerun");
+        fs::write(dir.join("steam_api64.dll"), b"original").unwrap();
+        backup_originals(&dir, &["steam_api64.dll"]).unwrap();
+
+        // Simulate a successful patch.
+        fs::write(dir.join("steam_api64.dll"), b"patched").unwrap();
+
+        // Re-running the backup must detect "already patched" and NOT clobber
+        // the verified original backup with patched content.
+        let outcome = backup_originals(&dir, &["steam_api64.dll"]).unwrap();
+        assert_eq!(
+            outcome.state("steam_api64.dll"),
+            Some(BackupState::AlreadyPatched)
+        );
+        assert_eq!(
+            fs::read(dir.join("steam_api64.dll.orig")).unwrap(),
+            b"original",
+            "verified backup must survive a re-run over a patched binary"
+        );
+
+        // And restore still recovers the true original.
+        restore_originals(&dir, &["steam_api64.dll"]).unwrap();
+        assert_eq!(fs::read(dir.join("steam_api64.dll")).unwrap(), b"original");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn idempotent_backup_when_unpatched() {
+        let dir = tmpdir("idem");
+        fs::write(dir.join("steam_api64.dll"), b"same").unwrap();
+        let first = backup_originals(&dir, &["steam_api64.dll"]).unwrap();
+        assert_eq!(first.state("steam_api64.dll"), Some(BackupState::BackedUp));
+        let second = backup_originals(&dir, &["steam_api64.dll"]).unwrap();
+        assert_eq!(
+            second.state("steam_api64.dll"),
+            Some(BackupState::BackedUp),
+            "unmodified re-run stays in BackedUp state (no-op)"
+        );
+        assert_eq!(fs::read(dir.join("steam_api64.dll.orig")).unwrap(), b"same");
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -203,6 +324,67 @@ mod tests {
         assert!(matches!(err, EngineError::ManifestMismatch { .. }));
         // Live file untouched by the aborted restore.
         assert_eq!(fs::read(dir.join("steam_api64.dll")).unwrap(), b"patched");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn interrupted_cleanup_is_recoverable() {
+        let dir = tmpdir("partial-restore");
+
+        // Two tracked binaries; simulate a crash after only steam_api.dll's
+        // cleanup completed (its .orig is gone AND its manifest entry was
+        // persisted as removed), while steam_api64.dll remains pending with
+        // its backup intact.
+        fs::write(dir.join("steam_api.dll"), b"patched-a").unwrap();
+        fs::write(dir.join("steam_api64.dll"), b"patched-b").unwrap();
+        fs::write(dir.join("steam_api64.dll.orig"), b"original-b").unwrap();
+        let mut manifest = Manifest::default();
+        manifest
+            .entries
+            .insert("steam_api64.dll".to_string(), sha256_hex(b"original-b"));
+        save_manifest(&dir, &manifest).unwrap();
+
+        // A retry of restore completes for the remaining binary.
+        restore_originals(&dir, &["steam_api.dll", "steam_api64.dll"]).unwrap();
+        assert_eq!(
+            fs::read(dir.join("steam_api64.dll")).unwrap(),
+            b"original-b",
+            "remaining pending backup must be restored on retry"
+        );
+        assert!(!dir.join("steam_api64.dll.orig").exists());
+        // steam_api.dll had no pending entry — untouched.
+        assert_eq!(fs::read(dir.join("steam_api.dll")).unwrap(), b"patched-a");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_copy_keeps_all_backups_for_retry() {
+        let dir = tmpdir("copy-fail");
+        fs::write(dir.join("steam_api.dll"), b"orig-a").unwrap();
+        fs::write(dir.join("steam_api64.dll"), b"orig-b").unwrap();
+        backup_originals(&dir, &["steam_api.dll", "steam_api64.dll"]).unwrap();
+
+        // Simulate patching both, then make one destination a directory so
+        // the copy phase fails mid-way.
+        fs::write(dir.join("steam_api.dll"), b"new-a").unwrap();
+        fs::write(dir.join("steam_api64.dll"), b"new-b").unwrap();
+        fs::remove_file(dir.join("steam_api.dll")).unwrap();
+        fs::create_dir_all(dir.join("steam_api.dll")).unwrap();
+
+        let result = restore_originals(&dir, &["steam_api.dll", "steam_api64.dll"]);
+        assert!(result.is_err());
+
+        // Both backups must still exist — nothing was cleaned up.
+        assert!(dir.join("steam_api.dll.orig").exists());
+        assert!(dir.join("steam_api64.dll.orig").exists());
+
+        // Remove the obstruction and retry: full restore succeeds.
+        fs::remove_dir_all(dir.join("steam_api.dll")).unwrap();
+        restore_originals(&dir, &["steam_api.dll", "steam_api64.dll"]).unwrap();
+        assert_eq!(fs::read(dir.join("steam_api.dll")).unwrap(), b"orig-a");
+        assert_eq!(fs::read(dir.join("steam_api64.dll")).unwrap(), b"orig-b");
+        assert!(!dir.join("steam_api.dll.orig").exists());
+        assert!(!dir.join("steam_api64.dll.orig").exists());
         fs::remove_dir_all(&dir).ok();
     }
 

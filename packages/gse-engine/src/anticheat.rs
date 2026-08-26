@@ -34,9 +34,7 @@ const MAX_SCAN_DEPTH: usize = 4;
 /// TODO(phase-3): consult a per-game compatibility database from the server.
 pub fn detect(game_dir: &Path) -> Result<Option<String>, EngineError> {
     if !game_dir.is_dir() {
-        return Err(EngineError::GameDirNotFound(
-            game_dir.display().to_string(),
-        ));
+        return Err(EngineError::GameDirNotFound(game_dir.display().to_string()));
     }
     scan_dir(game_dir, 0)
 }
@@ -48,14 +46,18 @@ fn scan_dir(dir: &Path, depth: usize) -> Result<Option<String>, EngineError> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| EngineError::ScanFailed(format!("{}: {e}", dir.display())))?;
     for entry in entries {
-        let entry = entry
-            .map_err(|e| EngineError::ScanFailed(format!("{}: {e}", dir.display())))?;
+        let entry =
+            entry.map_err(|e| EngineError::ScanFailed(format!("{}: {e}", dir.display())))?;
         let name = entry.file_name();
         let name_lower = name.to_string_lossy().to_lowercase();
         if ANTICHEAT_MARKERS.contains(&name_lower.as_str()) {
             return Ok(Some(name_lower));
         }
-        if entry.file_type().map_err(|e| EngineError::ScanFailed(e.to_string()))?.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|e| EngineError::ScanFailed(e.to_string()))?
+            .is_dir()
+        {
             if let Some(found) = scan_dir(&entry.path(), depth + 1)? {
                 return Ok(Some(found));
             }
@@ -74,10 +76,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("gse-antictest-top");
         fs::create_dir_all(&tmp).unwrap();
         fs::write(tmp.join("EasyAntiCheat.exe"), b"x").unwrap();
-        assert_eq!(
-            detect(&tmp).unwrap(),
-            Some("easyanticheat.exe".to_string())
-        );
+        assert_eq!(detect(&tmp).unwrap(), Some("easyanticheat.exe".to_string()));
         fs::remove_dir_all(&tmp).ok();
     }
 
@@ -87,10 +86,7 @@ mod tests {
         let nested = tmp.join("a/b/c");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("beservice.exe"), b"x").unwrap();
-        assert_eq!(
-            detect(&tmp).unwrap(),
-            Some("beservice.exe".to_string())
-        );
+        assert_eq!(detect(&tmp).unwrap(), Some("beservice.exe".to_string()));
         fs::remove_dir_all(&tmp).ok();
     }
 
@@ -106,6 +102,9 @@ mod tests {
     #[test]
     fn missing_directory_is_error_not_clear() {
         let missing = std::env::temp_dir().join("gse-antictest-missing-does-not-exist");
-        assert!(matches!(detect(&missing), Err(EngineError::GameDirNotFound(_))));
+        assert!(matches!(
+            detect(&missing),
+            Err(EngineError::GameDirNotFound(_))
+        ));
     }
 }
