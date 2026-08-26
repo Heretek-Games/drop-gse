@@ -11,11 +11,29 @@ the Drop server.
 
 ## Packages
 
-| Package | Role |
-| --- | --- |
-| `packages/drop-addon-server` | Drop server plugin: room orchestration, mesh token distribution, lobby registry |
+| Package                      | Role                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `packages/drop-addon-server` | Drop server plugin: room orchestration, mesh token distribution, lobby registry         |
 | `packages/drop-addon-client` | Drop client plugin: pre-launch hooks, VPN validation, post-exit teardown, UI extensions |
-| `packages/gse-engine` | Core emulator patcher: DLL manager, config generator, anti-cheat detection |
+| `packages/gse-engine`        | Core emulator patcher: DLL manager, config generator, anti-cheat detection              |
+
+## Automated review
+
+PRs are reviewed by two bots:
+
+- **CodeRabbit** — inline review threads and walkthrough summaries.
+- **OpenCodeReview** (`alibaba/open-code-review`) — LLM-powered review via an
+  OpenAI-compatible endpoint (`.github/workflows/ocr-review.yml`). Re-review on
+  demand by commenting `/open-code-review` (maintainers only).
+
+OpenCodeReview requires these **organization** Actions secrets
+(Org Settings → Secrets and variables → Actions → Organization secrets):
+
+| Secret      | Purpose                        |
+| ----------- | ------------------------------ |
+| `LLM_API`   | OpenAI-compatible endpoint URL |
+| `LLM_KEY`   | Auth token for the endpoint    |
+| `LLM_MODEL` | Model name                     |
 
 ## License
 

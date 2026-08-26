@@ -1,0 +1,106 @@
+# OpenCodeReview — LLM-powered PR review (alongside CodeRabbit).
+#
+# Adapted from alibaba/open-code-review examples/github_actions/ocr-review.yml
+# (Apache-2.0). Configured for an OpenAI-compatible endpoint.
+#
+# Required ORGANIZATION secrets (Org Settings → Secrets and variables →
+# Actions → Organization secrets):
+#   secret  LLM_API    OpenAI-compatible endpoint URL   → llm_url
+#   secret  LLM_KEY    auth token                       → llm_auth_token
+#   secret  LLM_MODEL  model name                       → llm_model
+# Protocol is pinned to OpenAI-compatible via llm_use_anthropic: 'false'.
+#
+# Triggers: automatic review on PR open/synchronize/reopen, plus on-demand
+# re-review when a MEMBER/OWNER/COLLABORATOR comments '/open-code-review'
+# or '@open-code-review' (bot authors excluded as a safety net).
+
+name: OpenCodeReview PR Review
+
+# Conditional concurrency group: PR events + valid review commands share a
+# per-PR group so a new review cancels a stale one; every other comment lands
+# in a unique noop group and is skipped instantly without cancelling anything.
+concurrency:
+  group: >-
+    ${{
+      (
+        github.event_name == 'pull_request_target'
+        || (
+          github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && github.event.comment.user.type != 'Bot'
+          && (
+            github.event.comment.author_association == 'MEMBER'
+            || github.event.comment.author_association == 'OWNER'
+            || github.event.comment.author_association == 'COLLABORATOR'
+          )
+          && (
+            startsWith(github.event.comment.body, '/open-code-review')
+            || startsWith(github.event.comment.body, '@open-code-review')
+          )
+        )
+      )
+      && format('ocr-{0}', github.event.pull_request.number || github.event.issue.number)
+      || format('noop-{0}', github.run_id)
+    }}
+  cancel-in-progress: true
+
+on:
+  # pull_request_target so org secrets are available even for fork PRs.
+  # Safe here because the action only reads the diff and posts comments;
+  # it does not execute code from the PR.
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name == 'pull_request_target'
+      || (
+        github.event_name == 'issue_comment'
+        && github.event.issue.pull_request
+        && github.event.comment.user.type != 'Bot'
+        && (
+          github.event.comment.author_association == 'MEMBER'
+          || github.event.comment.author_association == 'OWNER'
+          || github.event.comment.author_association == 'COLLABORATOR'
+        )
+        && (
+          startsWith(github.event.comment.body, '/open-code-review')
+          || startsWith(github.event.comment.body, '@open-code-review')
+        )
+      )
+    steps:
+      - name: Get PR context
+        id: pr-context
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // issue_comment events carry no top-level pull_request payload,
+            // so resolve the PR refs for the action explicitly.
+            const prNumber = context.issue.number;
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            core.setOutput('base_ref', pullRequest.base.ref);
+            core.setOutput('head_sha', pullRequest.head.sha);
+
+      - name: Run OpenCodeReview
+        uses: alibaba/open-code-review@main
+        with:
+          llm_url: ${{ secrets.LLM_API }}
+          llm_auth_token: ${{ secrets.LLM_KEY }}
+          llm_model: ${{ secrets.LLM_MODEL }}
+          llm_use_anthropic: "false" # OpenAI-compatible protocol
+          base_ref: ${{ steps.pr-context.outputs.base_ref }}
+          head_sha: ${{ steps.pr-context.outputs.head_sha }}

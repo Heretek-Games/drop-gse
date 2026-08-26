@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  rust:
+    name: Rust (gse-engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/gse-engine
+      - run: cargo fmt --check
+        working-directory: packages/gse-engine
+      - run: cargo clippy -- -D warnings
+        working-directory: packages/gse-engine
+      - run: cargo test
+        working-directory: packages/gse-engine
+
+  sonarcloud:
+    name: SonarCloud scan
+    runs-on: ubuntu-latest
+    # Requires SONAR_TOKEN secret once the project is onboarded on sonarcloud.io.
+    # The `secrets` context is not available in job-level `if`, so the gate
+    # lives on the scan step via its env mapping below.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for blame-based analysis
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        if: env.SONAR_TOKEN != ''
