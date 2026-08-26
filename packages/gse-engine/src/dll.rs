@@ -25,14 +25,21 @@ struct Manifest {
     entries: std::collections::BTreeMap<String, String>,
 }
 
+/// Lowercase hex encoding of the SHA-256 digest. Written manually because
+/// sha2 0.11's digest output (`Array<u8, _>`) no longer implements
+/// `LowerHex` (it moved from `generic-array` to `hybrid-array`).
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 fn sha256_of(path: &Path) -> Result<String, EngineError> {
     let data = std::fs::read(path)?;
-    Ok(format!("{:x}", Sha256::digest(&data)))
+    Ok(to_hex(&Sha256::digest(&data)))
 }
 
 #[cfg(test)]
 fn sha256_hex(data: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(data))
+    to_hex(&Sha256::digest(data))
 }
 
 fn manifest_path(game_dir: &Path) -> std::path::PathBuf {
