@@ -10,6 +10,16 @@ pub enum EngineError {
     AntiCheatPresent(String),
     #[error("steam_api binary not found in: {0}")]
     SteamApiNotFound(String),
+    #[error("anti-cheat scan failed (fail closed): {0}")]
+    ScanFailed(String),
+    #[error("backup manifest mismatch for {path}: expected {expected}, found {found}")]
+    ManifestMismatch {
+        path: String,
+        expected: String,
+        found: String,
+    },
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("manifest serialization error: {0}")]
+    Manifest(#[from] serde_json::Error),
 }

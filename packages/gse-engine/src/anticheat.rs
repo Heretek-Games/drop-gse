@@ -2,7 +2,12 @@
 //!
 //! Refuses to patch a game directory when known anti-cheat payloads are
 //! present — modified `steam_api` binaries are rejected by EAC/BattlEye and
-//! can trip account bans.
+//! can trip account bans. The scan is **fail-closed**: any traversal error
+//! aborts patching rather than reporting a clear directory.
+
+use std::path::Path;
+
+use crate::error::EngineError;
 
 /// Well-known anti-cheat module filenames (case-insensitive match).
 pub const ANTICHEAT_MARKERS: &[&str] = &[
@@ -15,18 +20,92 @@ pub const ANTICHEAT_MARKERS: &[&str] = &[
     "battleye.dll",
 ];
 
-/// Returns the first detected anti-cheat marker in `game_dir`, if any.
+/// Maximum recursion depth below `game_dir`. Game layouts are flat enough
+/// that anti-cheat payloads live close to the executable; deeper trees are
+/// treated as out of scope rather than scanned unboundedly.
+const MAX_SCAN_DEPTH: usize = 4;
+
+/// Recursively scan `game_dir` for anti-cheat markers.
 ///
-/// TODO(phase-3): recursive scan with depth limit + allowlist of known-safe
-/// directories; consult a per-game compatibility database from the server.
-pub fn detect(game_dir: &std::path::Path) -> Option<String> {
-    let entries = std::fs::read_dir(game_dir).ok()?;
-    for entry in entries.flatten() {
+/// Returns `Ok(Some(marker))` on detection, `Ok(None)` when the scanned tree
+/// is clear, and `Err` when the directory cannot be inspected — an incomplete
+/// scan must never be reported as safe.
+///
+/// TODO(phase-3): consult a per-game compatibility database from the server.
+pub fn detect(game_dir: &Path) -> Result<Option<String>, EngineError> {
+    if !game_dir.is_dir() {
+        return Err(EngineError::GameDirNotFound(
+            game_dir.display().to_string(),
+        ));
+    }
+    scan_dir(game_dir, 0)
+}
+
+fn scan_dir(dir: &Path, depth: usize) -> Result<Option<String>, EngineError> {
+    if depth > MAX_SCAN_DEPTH {
+        return Ok(None);
+    }
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| EngineError::ScanFailed(format!("{}: {e}", dir.display())))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| EngineError::ScanFailed(format!("{}: {e}", dir.display())))?;
         let name = entry.file_name();
-        let name = name.to_string_lossy().to_lowercase();
-        if ANTICHEAT_MARKERS.contains(&name.as_str()) {
-            return Some(name.to_string());
+        let name_lower = name.to_string_lossy().to_lowercase();
+        if ANTICHEAT_MARKERS.contains(&name_lower.as_str()) {
+            return Ok(Some(name_lower));
+        }
+        if entry.file_type().map_err(|e| EngineError::ScanFailed(e.to_string()))?.is_dir() {
+            if let Some(found) = scan_dir(&entry.path(), depth + 1)? {
+                return Ok(Some(found));
+            }
         }
     }
-    None
+    Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn detects_marker_at_top_level() {
+        let tmp = std::env::temp_dir().join("gse-antictest-top");
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("EasyAntiCheat.exe"), b"x").unwrap();
+        assert_eq!(
+            detect(&tmp).unwrap(),
+            Some("easyanticheat.exe".to_string())
+        );
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn detects_marker_nested_within_depth_limit() {
+        let tmp = std::env::temp_dir().join("gse-antictest-nested");
+        let nested = tmp.join("a/b/c");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("beservice.exe"), b"x").unwrap();
+        assert_eq!(
+            detect(&tmp).unwrap(),
+            Some("beservice.exe".to_string())
+        );
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn clear_directory_returns_none() {
+        let tmp = std::env::temp_dir().join("gse-antictest-clear");
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("game.exe"), b"x").unwrap();
+        assert_eq!(detect(&tmp).unwrap(), None);
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn missing_directory_is_error_not_clear() {
+        let missing = std::env::temp_dir().join("gse-antictest-missing-does-not-exist");
+        assert!(matches!(detect(&missing), Err(EngineError::GameDirNotFound(_))));
+    }
 }
