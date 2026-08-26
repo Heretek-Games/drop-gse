@@ -9,6 +9,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint & format
@@ -57,7 +60,8 @@ jobs:
     name: SonarCloud scan
     runs-on: ubuntu-latest
     # Requires SONAR_TOKEN secret once the project is onboarded on sonarcloud.io.
-    if: ${{ secrets.SONAR_TOKEN != '' }}
+    # The `secrets` context is not available in job-level `if`, so the gate
+    # lives on the scan step via its env mapping below.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,3 +75,4 @@ jobs:
       - uses: SonarSource/sonarqube-scan-action@v4
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        if: env.SONAR_TOKEN != ''

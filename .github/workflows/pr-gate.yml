@@ -13,22 +13,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Require descriptive title (conventional-commit-ish)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          title="${{ github.event.pull_request.title }}"
+          title="$PR_TITLE"
           if ! echo "$title" | grep -Eq '^(feat|fix|docs|chore|refactor|test|ci|build)(\([a-z0-9-]+\))?!?: .+'; then
             echo "::error::PR title must follow 'type(scope): description' — got: '$title'"
             exit 1
           fi
       - name: Require non-empty body
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          body="$(gh pr view "${{ github.event.pull_request.number }}" --json body --jq '.body')"
+          body="$(gh pr view "$PR_NUMBER" --json body --jq '.body')"
           if [ ${#body} -lt 30 ]; then
             echo "::error::PR body must describe the change (>= 30 chars)"
             exit 1
           fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Block merge into main from main-based direct edits without a linked issue
+      - name: Documentation that branch protection is in force
         if: github.base_ref == 'main'
         run: |
           echo "Branch protection on main enforces: PR review, passing status checks,"
