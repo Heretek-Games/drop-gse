@@ -29,11 +29,11 @@ PRs are reviewed by two bots:
 OpenCodeReview requires these **organization** Actions secrets
 (Org Settings → Secrets and variables → Actions → Organization secrets):
 
-| Secret | Purpose |
-| --- | --- |
-| `LLM_API` | OpenAI-compatible endpoint URL |
-| `LLM_KEY` | Auth token for the endpoint |
-| `LLM_MODEL` | Model name |
+| Secret      | Purpose                        |
+| ----------- | ------------------------------ |
+| `LLM_API`   | OpenAI-compatible endpoint URL |
+| `LLM_KEY`   | Auth token for the endpoint    |
+| `LLM_MODEL` | Model name                     |
 
 ## License
 

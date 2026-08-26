@@ -101,6 +101,6 @@ jobs:
           llm_url: ${{ secrets.LLM_API }}
           llm_auth_token: ${{ secrets.LLM_KEY }}
           llm_model: ${{ secrets.LLM_MODEL }}
-          llm_use_anthropic: 'false' # OpenAI-compatible protocol
+          llm_use_anthropic: "false" # OpenAI-compatible protocol
           base_ref: ${{ steps.pr-context.outputs.base_ref }}
           head_sha: ${{ steps.pr-context.outputs.head_sha }}
