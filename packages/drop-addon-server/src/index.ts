@@ -67,6 +67,21 @@ export interface MeshProvision {
   expiresAt: number;
 }
 
+/**
+ * Sanitized room view for unauthenticated discovery callers. Contains only
+ * public metadata — no member identities, no credentials.
+ */
+export interface DiscoverableRoom {
+  id: string;
+  gameId: string;
+  versionId: string;
+  emulator: EmulatorBinding;
+  mesh: PublicMeshInfo;
+  memberCount: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
 export interface RoomRegistry {
   createRoom(
     gameId: string,
@@ -76,8 +91,13 @@ export interface RoomRegistry {
   ): Promise<Room>;
   joinRoom(roomId: string, userId: string): Promise<Room>;
   closeRoom(roomId: string): Promise<void>;
-  /** Discover rooms, optionally filtered by game. Never returns credentials. */
-  listRooms(filter?: { gameId?: string }): Promise<Room[]>;
+  /**
+   * Discover rooms, optionally filtered by game. Returns sanitized
+   * `DiscoverableRoom` views — never credentials or member identities
+   * (member lists are reserved for authenticated member views via
+   * `joinRoom`/`Room`).
+   */
+  listRooms(filter?: { gameId?: string }): Promise<DiscoverableRoom[]>;
   /**
    * Authenticated, membership-checked operation that returns the mesh
    * credential for an approved member of a room.

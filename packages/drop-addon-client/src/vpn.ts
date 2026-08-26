@@ -8,9 +8,14 @@
  *               (auth = filesystem permissions / peer UID)
  *   - macOS:    Local TCP fallback + Basic-Auth token via
  *               `safesocket.LocalTCPPortAndToken`
- *   - Windows:  Named pipe `\.\pipe\lantern-provider`
+ *   - Windows:  Named pipe
+ *               `\\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled`
+ *               (auth via client-token impersonation, SDDL-gated; see
+ *               `safesocket/pipe_windows.go`)
  *   - All:      `tailscale` Go client (`tailscale.com/client/local`) handles
- *               these transparently — preferred over raw HTTP for new code.
+ *               these transparently — preferred over raw HTTP for new code;
+ *               prefer the `{ kind: "embedded-go" }` variant so path
+ *               resolution stays inside the Go library.
  *   - Host header MUST be `local-tailscaled.sock`; `Origin`/`Referer` are
  *     rejected.
  *   - Drop's desktop already exposes a Tailscale C-ABI crate
