@@ -84,12 +84,25 @@ coordination layer over durable state — not stateless:
   that all members must honor for bit-identical configs. Host migration on
   host loss per the lease rules above.
 - **Mesh coordinator** — pluggable backend:
-  - _Tailscale_: **one-off ephemeral auth key per approved member** — never a
-    shared reusable room key, since any holder of a reusable key could enroll
-    arbitrary extra devices and revocation does not de-register already-created
-    nodes. Keys are ACL-tag-scoped; teardown revokes outstanding keys and
-    removes every node registered under the room's tag. Members join via the
-    embedded tailscale crate.
+  - _Tailscale_: a tagged auth key **does not create policy by itself**, so
+    room provisioning is a transactional control-plane operation that runs
+    BEFORE any key is issued:
+    1. Ensure the room tag (e.g. `tag:dropgse-room-<roomId>`) is declared in
+       the tailnet policy file's `tagOwners`, owned only by the provisioning
+       OAuth client.
+    2. Install a same-room-only ACL/grant (`tag:room-X` ↔ `tag:room-X` on the
+       emulator's UDP ports) and validate the resulting policy compiles and
+       applies.
+    3. Only then issue **one-off ephemeral auth keys per approved member**
+       carrying that tag — never a shared reusable key. Clients join using
+       isolated ephemeral state so their normal tailnet identity is never
+       replaced (see COMPARATIVE_ANALYSIS.md §3).
+    4. Teardown removes nodes registered under the tag (key revocation alone
+       does not de-register existing nodes), revokes outstanding keys, then
+       reverts the tag/ACL grant — in reverse order of creation.
+       If the Drop server has no ability to mutate tailnet policy (OAuth/policy
+       access unavailable), Tailscale must not be offered as an isolated
+       per-room backend; fall back to ZeroTier or BYO-network mode.
   - _ZeroTier_: create controller network (`POST /controller/network/<nodeId>______`)
     configured with `ipAssignmentPools`, `v4AssignMode: {"zt": true}`, a
     managed route for the room CIDR, `enableBroadcast=true`, `private=true`;

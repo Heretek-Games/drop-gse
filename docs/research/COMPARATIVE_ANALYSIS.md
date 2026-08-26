@@ -127,33 +127,61 @@ games where file patching fails.
 
 1. Host creates a room → server provisions a fresh ephemeral credential set:
    - Tailscale: **one-off ephemeral auth key per approved member**, scoped to
-     the room's ACL tag. One-off keys are auto-invalidated after first use, so
-     a leaked key cannot enroll additional devices; teardown also removes all
-     nodes registered under the room's tag (revoking a key alone does not
-     de-register already-created nodes).
-   - ZeroTier: create a network on a controller (self-hosted or Central API)
-     via `POST /controller/network/<controllerNodeId>______` (node ID plus six
-     underscores → controller generates the network ID), then configure it:
+     the room's ACL tag — which must be created in the tailnet policy
+     (`tagOwners`) together with a same-room-only ACL/grant **before** keys
+     are issued; a tagged key does not create policy by itself (see the
+     transactional room-policy operation specified in SPECIFICATION.md §3.2).
+     One-off keys are auto-invalidated after first use, so a leaked key cannot
+     enroll additional devices; teardown also removes all nodes registered
+     under the room's tag (revoking a key alone does not de-register
+     already-created nodes). **Isolated client state:** a tagged identity and
+     a user identity are mutually exclusive on a node, so room joins run the
+     embedded tailscale client against isolated ephemeral state
+     (`tailscaled --state=mem:` or a per-session `--statedir` + socket) rather
+     than the member's normal daemon state — joining a Drop room must never
+     replace a member's own tailnet login or disrupt existing access.
+   - ZeroTier, self-hosted controller (drop-gse's primary target, hosted as a
+     Drop `ServiceManager` sidecar): local service/controller API on
+     `localhost:9993`, authenticated via `X-ZT1-AUTH` (`authtoken.secret`);
+     network creation via `POST /controller/network/<controllerNodeId>______`
+     (node ID plus six underscores → controller generates the network ID),
+     then configure it:
      ```json
      {
-       "ipAssignmentPools": [{ "ipRangeStart": "10.242.0.1", "ipRangeEnd": "10.242.0.254" }],
-       "routes": [{ "target": "10.242.0.0/24", "via": null }],
+       "ipAssignmentPools": [
+         { "ipRangeStart": "<room base + 1>", "ipRangeEnd": "<room base + 254>" }
+       ],
+       "routes": [{ "target": "<room-cidr>", "via": null }],
        "v4AssignMode": { "zt": true },
        "enableBroadcast": true,
        "private": true
      }
      ```
-     Members are authorized on join; before any client writes
-     `custom_broadcasts.txt`, provisioning is validated by `GET /network/{id}`
-     (status `ok`, assigned addresses present) and a UDP 47584 exchange smoke
-     test between two members.
+     The `<room-cidr>` is **unique per active room**, allocated server-side
+     from a dedicated private block (e.g. sequential /24s out of
+     `10.242.0.0/16`); a host that joins two rooms therefore never gets
+     overlapping managed routes, and any range conflicting with existing host
+     routes is rejected at join time.
+   - ZeroTier Central (configurable alternative): entirely different hosted
+     REST contract — legacy `https://api.zerotier.com/api/v1` with an
+     `Authorization: token <token>` personal token, or New Central
+     `https://central.zerotier.com/api/v2` with a Bearer service-account
+     token; networks are created via `POST /network`, members authorized via
+     `POST /network/<id>/member/<memberId>`, deleted via
+     `DELETE /network/<id>`. drop-gse treats this as a distinct backend
+     configuration, not a re-skin of the controller flow.
 2. Server distributes credentials to approved room members over Drop's
    authenticated client API (WebSocket notifications channel).
 3. Clients join the mesh, write peer addresses into
-   `custom_broadcasts.txt`, launch.
-4. On teardown: restore binaries, remove configs, revoke keys / remove room
-   nodes (`tailscale logout` for ephemeral identities) / leave + delete
-   ZeroTier network; ephemeral state evaporates.
+   `custom_broadcasts.txt`, launch. Before writing its broadcast entry,
+   **each** approved member is validated individually: `GET /network/{id}`
+   reports member status `"OK"` (exact literal from the `NetworkStatus`
+   enum in zerotier-one-api-spec) with at least one assigned address, plus a
+   UDP 47584 reachability exchange with the room host. A member failing any
+   check is gated out of the file write until it passes.
+4. On teardown: restore binaries, remove configs, remove room nodes /
+   revert room tag+ACL / revoke keys (`tailscale logout` for ephemeral
+   identities) / leave + delete ZeroTier network; ephemeral state evaporates.
 
 ### Binding emulator traffic through the mesh
 
