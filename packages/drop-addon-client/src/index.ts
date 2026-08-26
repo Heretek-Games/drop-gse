@@ -6,6 +6,11 @@
  * docs/architecture/SPECIFICATION.md (drop-gse Phase 2).
  */
 
+import type { MeshRoomRef } from "./vpn.js";
+
+export type { MeshRoomRef, MeshBackend, MeshStatus, VpnValidator } from "./vpn.js";
+export { ZeroTierValidator, TailscaleValidator, type TailscaleLocalAPI } from "./vpn.js";
+
 /** Lifecycle stages executed around a game launch when a room is active. */
 export type LifecycleStage =
   | "pre-launch:anticheat-check"
@@ -28,6 +33,8 @@ export interface LaunchContext {
   /** Absolute path of the installed game directory on this machine. */
   gameDir: string;
   roomId?: string;
+  /** Backend-specific mesh ref, populated after a successful mesh-join. */
+  meshRef?: MeshRoomRef;
 }
 
 /**

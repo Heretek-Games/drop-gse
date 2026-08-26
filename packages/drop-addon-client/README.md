@@ -7,7 +7,14 @@ Responsibilities:
 - **Pre-launch hook** — invoke `gse-engine` to back up originals, deploy the
   emulator DLL/config set, and point `custom_broadcasts.txt` at mesh peers.
 - **VPN interface validation** — verify the mesh interface is up and reachable
-  before launch (Tailscale Local API / ZeroTier service API on localhost:9993).
+  before launch. Per-backend transports are documented in
+  [`src/vpn.ts`](src/vpn.ts): Tailscale uses a platform-specific LocalAPI
+  transport (Linux: `/var/run/tailscale/tailscaled.sock`; Windows: named pipe;
+  macOS: local TCP + Basic-Auth token) — and Drop's desktop already embeds
+  the tailscale Go client behind a C-ABI crate
+  (`desktop/src-tauri/tailscale/`), which is the preferred integration.
+  ZeroTier uses the HTTP service API on `localhost:9993` with the
+  `X-ZT1-AUTH` header (token from `authtoken.secret`).
 - **Post-exit teardown** — restore original binaries, remove ephemeral routing,
   logout ephemeral mesh identity.
 - **UI extensions** — "Host Multiplayer Room" / "Join via Drop" actions wired

@@ -18,11 +18,13 @@ export default tseslint.config(
     },
   },
   {
-    ignores: [
-      "**/dist/**",
-      "**/node_modules/**",
-      ".research/**",
-      "packages/gse-engine/target/**",
-    ],
+    // Type-aware linting requires a tsconfig project; plain JS config files
+    // (this file included) are outside any project, so disable type-checked
+    // rules for them instead of failing to parse.
+    ...tseslint.configs.disableTypeChecked,
+    files: ["**/*.{js,mjs,cjs}"],
+  },
+  {
+    ignores: ["**/dist/**", "**/node_modules/**", ".research/**", "packages/gse-engine/target/**"],
   },
 );
