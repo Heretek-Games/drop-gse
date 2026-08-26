@@ -7,11 +7,11 @@
 
 ### 1.1 `steam_api` handling: replacement vs. proxy-forwarding
 
-| | **gbe_fork** (Detanup01) | **gse_fork** (alex47exe) | **ReFix** (Coronitaa) |
-| --- | --- | --- | --- |
-| Model | Full drop-in **replacement** of `steam_api(64).dll` / `libsteam_api.so` | Same (direct fork of gbe_fork) | **Proxy chain**: original renamed to `steam_api64_valve.dll`, proxy forwards 1055+ exports via ASM jump table (`src/steam_fwd.asm`); plus `winmm.dll` loader proxy and EOS proxy |
-| Backup convention | none needed (replaces) | same | `.orig` / `_o.dll` / `_valve.dll` suffixes; uninstaller restores |
-| Extra loaders | `steamclient` loader path (`tools/steamclient_loader`) for ColdClient-style launch without touching game DLLs | inherited | `winmm.dll` proxy forces early load |
+|                   | **gbe_fork** (Detanup01)                                                                                      | **gse_fork** (alex47exe)       | **ReFix** (Coronitaa)                                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model             | Full drop-in **replacement** of `steam_api(64).dll` / `libsteam_api.so`                                       | Same (direct fork of gbe_fork) | **Proxy chain**: original renamed to `steam_api64_valve.dll`, proxy forwards 1055+ exports via ASM jump table (`src/steam_fwd.asm`); plus `winmm.dll` loader proxy and EOS proxy |
+| Backup convention | none needed (replaces)                                                                                        | same                           | `.orig` / `_o.dll` / `_valve.dll` suffixes; uninstaller restores                                                                                                                 |
+| Extra loaders     | `steamclient` loader path (`tools/steamclient_loader`) for ColdClient-style launch without touching game DLLs | inherited                      | `winmm.dll` proxy forces early load                                                                                                                                              |
 
 **Implication for drop-gse:** gbe_fork/gse_fook's replacement model is simpler
 to automate and works on Linux natively; ReFix's forwarding model preserves the
@@ -56,7 +56,8 @@ core integration point of drop-gse.
 Runtime config read from `<game_dir>/steam_settings/` (both forks;
 `settings_parser.cpp`):
 
-```
+```ini
+# <game_dir>/steam_settings/
 configs.main.ini        # identity, ports, save paths (user::saves::local_save_path)
 configs.app.ini         # DLC, depots, branches
 configs.user.ini        # per-user overrides
@@ -73,22 +74,22 @@ ReFix instead uses a single `ReFix.ini`
 
 ### 1.5 License & distribution posture
 
-| Repo | License | Notes |
-| --- | --- | --- |
-| gbe_fork | LGPL-3.0 | clean: dynamically linked wrapper is GPL-compatible |
-| gse_fork | LGPL-3.0 | fork of above |
-| SmartGoldbergEmu | LGPL-3+ | generator only |
-| ReFix | **inconsistent** (CC0 header + CC BY-NC-SA 4.0 text; README claims MIT) | NC terms are incompatible with Drop's distribution model → **non-goal** |
+| Repo             | License                                                                 | Notes                                                                   |
+| ---------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| gbe_fork         | LGPL-3.0                                                                | clean: dynamically linked wrapper is GPL-compatible                     |
+| gse_fork         | LGPL-3.0                                                                | fork of above                                                           |
+| SmartGoldbergEmu | LGPL-3+                                                                 | generator only                                                          |
+| ReFix            | **inconsistent** (CC0 header + CC BY-NC-SA 4.0 text; README claims MIT) | NC terms are incompatible with Drop's distribution model → **non-goal** |
 
 ## 2. Auto-patching & generation pipelines
 
-| Tool | Language | AppID detection | Binary patching | Config generation | Take |
-| --- | --- | --- | --- | --- | --- |
-| **SteamRoll** (nordicnode) | C#/.NET 8 | registry + `libraryfolders.vdf` | in-place, backup `.original`, hash-idempotent (`GoldbergPatcher.cs`) | `steam_settings/`, `steam_appid.txt`, `steam_interfaces.txt` (regex scan of DLL exports, `GoldbergScanner.cs`) | best reference pipeline incl. PE-import DRM/anti-cheat heuristics (`DrmDetector.cs`) |
-| **goldberg-patcher** (eligamii) | Rust | none | recursive replace, `non_gbe_patched_*.backup` | none | minimal; proves the Rust replacement loop is tiny |
-| **GSE-Generator** (brunolee-GIT) | batch/PS | Google→steamdb scrape | swap keeping `<name>_o.dll`; validates DLL bitness via 7z listing | rich sidecar: DLC, languages, achievements + images | brittle scraping; achievement schema fetch pattern useful |
-| **gse_fork_tools** (alex47exe) | Python | `-find` web search or SteamKit login | none | authoritative `steam_settings` generation from official Web API (achievements schema, UGC, item defs, branches.json) | best config-generation reference; login-based data beats scraping |
-| **SteamEmuUtility** (turusudiro) | C# (Playnite plugin) | Playnite library / ACF parse | **none — ColdClientLoader launch** | `ColdClientLoader.ini`, achievements, languages, controller configs | zero-touch alternative: wrap launch rather than patch files |
+| Tool                             | Language             | AppID detection                      | Binary patching                                                      | Config generation                                                                                                    | Take                                                                                 |
+| -------------------------------- | -------------------- | ------------------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **SteamRoll** (nordicnode)       | C#/.NET 8            | registry + `libraryfolders.vdf`      | in-place, backup `.original`, hash-idempotent (`GoldbergPatcher.cs`) | `steam_settings/`, `steam_appid.txt`, `steam_interfaces.txt` (regex scan of DLL exports, `GoldbergScanner.cs`)       | best reference pipeline incl. PE-import DRM/anti-cheat heuristics (`DrmDetector.cs`) |
+| **goldberg-patcher** (eligamii)  | Rust                 | none                                 | recursive replace, `non_gbe_patched_*.backup`                        | none                                                                                                                 | minimal; proves the Rust replacement loop is tiny                                    |
+| **GSE-Generator** (brunolee-GIT) | batch/PS             | Google→steamdb scrape                | swap keeping `<name>_o.dll`; validates DLL bitness via 7z listing    | rich sidecar: DLC, languages, achievements + images                                                                  | brittle scraping; achievement schema fetch pattern useful                            |
+| **gse_fork_tools** (alex47exe)   | Python               | `-find` web search or SteamKit login | none                                                                 | authoritative `steam_settings` generation from official Web API (achievements schema, UGC, item defs, branches.json) | best config-generation reference; login-based data beats scraping                    |
+| **SteamEmuUtility** (turusudiro) | C# (Playnite plugin) | Playnite library / ACF parse         | **none — ColdClientLoader launch**                                   | `ColdClientLoader.ini`, achievements, languages, controller configs                                                  | zero-touch alternative: wrap launch rather than patch files                          |
 
 **Engine decision:** gse-engine adopts SteamRoll's patch loop shape
 (scan interfaces → backup → replace → write sidecar configs, all
@@ -125,16 +126,34 @@ games where file patching fails.
 ### Provisioning strategy (per-room ephemeral meshes)
 
 1. Host creates a room → server provisions a fresh ephemeral credential set:
-   - Tailscale: one reusable **ephemeral auth key** scoped to an ACL tag/app
-     policy for this room.
-   - ZeroTier: new network ID on a controller (self-hosted or Central API)
-     with `enableBroadcast=true`, members authorized on join.
+   - Tailscale: **one-off ephemeral auth key per approved member**, scoped to
+     the room's ACL tag. One-off keys are auto-invalidated after first use, so
+     a leaked key cannot enroll additional devices; teardown also removes all
+     nodes registered under the room's tag (revoking a key alone does not
+     de-register already-created nodes).
+   - ZeroTier: create a network on a controller (self-hosted or Central API)
+     via `POST /controller/network/<controllerNodeId>______` (node ID plus six
+     underscores → controller generates the network ID), then configure it:
+     ```json
+     {
+       "ipAssignmentPools": [{ "ipRangeStart": "10.242.0.1", "ipRangeEnd": "10.242.0.254" }],
+       "routes": [{ "target": "10.242.0.0/24", "via": null }],
+       "v4AssignMode": { "zt": true },
+       "enableBroadcast": true,
+       "private": true
+     }
+     ```
+     Members are authorized on join; before any client writes
+     `custom_broadcasts.txt`, provisioning is validated by `GET /network/{id}`
+     (status `ok`, assigned addresses present) and a UDP 47584 exchange smoke
+     test between two members.
 2. Server distributes credentials to approved room members over Drop's
    authenticated client API (WebSocket notifications channel).
 3. Clients join the mesh, write peer addresses into
    `custom_broadcasts.txt`, launch.
-4. On teardown: restore binaries, remove configs, `tailscale logout` /
-   leave network; ephemeral state evaporates.
+4. On teardown: restore binaries, remove configs, revoke keys / remove room
+   nodes (`tailscale logout` for ephemeral identities) / leave + delete
+   ZeroTier network; ephemeral state evaporates.
 
 ### Binding emulator traffic through the mesh
 

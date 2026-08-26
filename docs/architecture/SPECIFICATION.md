@@ -11,7 +11,7 @@ ephemeral mesh network (Tailscale or ZeroTier), deploys a Goldberg-family
 Steam emulator configured to discover peers across that mesh, and restores
 everything on exit.
 
-```
+```text
 ┌─────────────┐  room API / WS   ┌──────────────────┐
 │ Drop Client │◄────────────────►│  Drop Server      │
 │ (Tauri/Rust │                  │  addon: room mgr, │
@@ -30,14 +30,14 @@ everything on exit.
 
 ## 2. Platform integration seams (verified against Drop source)
 
-| Seam | Evidence | Use |
-| --- | --- | --- |
-| Server HTTP API | `backend/main.go` — gorilla/mux on `:3433`, route table under `/api/v1`; Nuxt3 Nitro handlers in `server/server/api/v1/**` | addon exposes `/api/v1/gse/rooms/*` |
-| Real-time fanout | `server/server/api/v1/notifications/ws.get.ts` WebSocket channel | room lifecycle events, credential push |
-| Service manager | `server/server/internal/services/index.ts` (`Service<T>`, healthchecks) | host mesh-controller sidecar if ZeroTier self-hosted |
-| Launch pipeline | `desktop/src-tauri/process/src/process_manager.rs` — `ProcessHandler` trait (`process_manager.rs:627`), pluggable launchers (`process_handlers.rs`) | GseLauncher strategy wraps commands; emulator-launch config rows already exist (`emulator_launch_config`) |
-| Embedded VPN client | `desktop/src-tauri/tailscale/` crate (C ABI → Go lib) | in-process Tailscale join/status/logout |
-| Desktop UI | Nuxt app in `desktop/main` (`pages/`, plugins pattern) | "Host Multiplayer Room" / "Join via Drop" actions |
+| Seam                | Evidence                                                                                                                                            | Use                                                                                                       |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Server HTTP API     | `backend/main.go` — gorilla/mux on `:3433`, route table under `/api/v1`; Nuxt3 Nitro handlers in `server/server/api/v1/**`                          | addon exposes `/api/v1/gse/rooms/*`                                                                       |
+| Real-time fanout    | `server/server/api/v1/notifications/ws.get.ts` WebSocket channel                                                                                    | room lifecycle events, credential push                                                                    |
+| Service manager     | `server/server/internal/services/index.ts` (`Service<T>`, healthchecks)                                                                             | host mesh-controller sidecar if ZeroTier self-hosted                                                      |
+| Launch pipeline     | `desktop/src-tauri/process/src/process_manager.rs` — `ProcessHandler` trait (`process_manager.rs:627`), pluggable launchers (`process_handlers.rs`) | GseLauncher strategy wraps commands; emulator-launch config rows already exist (`emulator_launch_config`) |
+| Embedded VPN client | `desktop/src-tauri/tailscale/` crate (C ABI → Go lib)                                                                                               | in-process Tailscale join/status/logout                                                                   |
+| Desktop UI          | Nuxt app in `desktop/main` (`pages/`, plugins pattern)                                                                                              | "Host Multiplayer Room" / "Join via Drop" actions                                                         |
 
 Drop has **no formal plugin registry**; integration is upstream-contributable
 code (a new `ProcessHandler`, server routes, UI pages) plus this repo holding
@@ -60,22 +60,44 @@ Deterministic patcher library invoked by the client addon.
 - **Patcher** — idempotent backup (`<name>.orig` + SHA-256 manifest), replace,
   verify. Rollback = restore from manifest.
 - **Config writer** — generate `steam_settings/{configs.main.ini,
-  steam_appid.txt, steam_interfaces.txt, custom_broadcasts.txt}` with room peer
+steam_appid.txt, steam_interfaces.txt, custom_broadcasts.txt}` with room peer
   addresses; flavor-aware (gbe_fork vs gse_fork INI keys).
 
 ### 3.2 `drop-addon-server`
 
-Stateless coordination service (TypeScript) registered behind Drop's server:
+Coordination service (TypeScript) registered behind Drop's server. It is a thin
+coordination layer over durable state — not stateless:
 
-- **Room manager** — rooms keyed by `(gameId, versionId)` so all members run
-  bit-identical emulator configs. Host migration on host loss.
+- **Room store (durable)** — rooms, memberships, credential records and TTLs
+  live in Drop's existing Postgres instance (Prisma schema extension), so
+  active rooms survive coordinator restart or replacement. Credentials are
+  stored encrypted-at-rest and re-pushed from the store on coordinator
+  recovery; nothing is reconstructed from memory alone.
+- **Host lease (distributed)** — the host role is a lease in the room row:
+  renewed by heartbeat every ~15 s, expired after ~45 s of silence. On expiry,
+  any member may claim the lease; first writer wins via Postgres row-level
+  locking. Host migration is therefore automatic and does not require the old
+  host to participate.
+- **Room manager** — each session gets a unique server-generated `roomId`;
+  `(gameId, versionId)` is a join-time compatibility check, not the room key.
+  The room pins an emulator binding (`flavor`, release tag, release digest)
+  that all members must honor for bit-identical configs. Host migration on
+  host loss per the lease rules above.
 - **Mesh coordinator** — pluggable backend:
-  - *Tailscale*: create scoped ephemeral auth key per room (reusable key +
-    ACL tag); members join via embedded tailscale crate.
-  - *ZeroTier*: create controller network with `enableBroadcast=true`,
-    authorize member IDs as they present room tokens.
-- **Credential distribution** — secrets pushed only over authenticated,
-  room-membership-checked channels; never logged; single-use where the
+  - _Tailscale_: **one-off ephemeral auth key per approved member** — never a
+    shared reusable room key, since any holder of a reusable key could enroll
+    arbitrary extra devices and revocation does not de-register already-created
+    nodes. Keys are ACL-tag-scoped; teardown revokes outstanding keys and
+    removes every node registered under the room's tag. Members join via the
+    embedded tailscale crate.
+  - _ZeroTier_: create controller network (`POST /controller/network/<nodeId>______`)
+    configured with `ipAssignmentPools`, `v4AssignMode: {"zt": true}`, a
+    managed route for the room CIDR, `enableBroadcast=true`, `private=true`;
+    authorize member IDs as they present room tokens (see §4.1 for why real
+    per-room subnets are a ZeroTier property).
+- **Credential distribution** — secrets returned only from the authenticated,
+  membership-checked `provisionMeshCredential` operation; pushed over Drop's
+  WebSocket channel to approved members; never logged; one-off where the
   backend allows.
 - **Lobby registry** — clients relay emulator lobby announcements; the server
   publishes aggregated "joinable lobbies" per room.
@@ -84,7 +106,7 @@ Stateless coordination service (TypeScript) registered behind Drop's server:
 
 Runs inside/near the Drop desktop process around every launch:
 
-```
+```text
 pre-launch:
   anticheat-check → dll-backup → config-deploy → mesh-join → LAUNCH
 post-exit (always runs):
@@ -104,25 +126,33 @@ with member list and teardown button.
 
 ### 4.1 Broadcast storms & multi-game isolation
 
-*Risk:* multiple concurrent games broadcast on UDP 47584; without isolation a
+_Risk:_ multiple concurrent games broadcast on UDP 47584; without isolation a
 peer running Game B receives Game A announces → ghost lobbies, cross-game
 corruption (both forks namespace by AppID but rely on it being correct).
 
-*Controls:*
-1. **Per-room subnets** — each room gets its own mesh subnet/CIDR;
-   `custom_broadcasts.txt` contains only same-room peers.
-2. **AppID pinning** — room membership requires matching `(gameId, versionId)`;
-   engine writes the pinned AppID into `steam_appid.txt`.
+_Controls:_
+
+1. **Per-room isolation (backend-dependent)** — ZeroTier provides true
+   per-room subnets: each room's controller network gets its own CIDR via
+   `ipAssignmentPools` + managed routes, and `custom_broadcasts.txt` contains
+   only same-room peers. Tailscale cannot do per-room subnets — tailnet IPs
+   come from the shared CGNAT pool `100.64.0.0/10` — so isolation there is
+   enforced by per-room ACL tags in the tailnet policy, which restrict which
+   nodes a room member can reach.
+2. **AppID pinning** — room membership requires matching `(gameId, versionId)`
+   (join-time compatibility check against the unique room); the engine writes
+   the pinned AppID into `steam_appid.txt`.
 3. **Rate limiting** — announce cadence is fixed (~60 s) by the emulator; the
    mesh ACL (Tailscale tags / ZeroTier member rules) restricts traffic to
    room members, bounding blast radius to the room.
 
 ### 4.2 Anti-cheat & DLL integrity collision
 
-*Risk:* EasyAntiCheat/BattlEye validate `steam_api` binaries at boot; a
+_Risk:_ EasyAntiCheat/BattlEye validate `steam_api` binaries at boot; a
 modified binary is rejected (game fails) or trips enforcement (account risk).
 
-*Controls:*
+_Controls:_
+
 1. **Pre-flight scan** — gse-engine refuses to patch when EAC/BattlEye markers
    are present (`anticheat.rs`), surfacing a hard user-facing block, not a
    warning.
@@ -135,13 +165,13 @@ modified binary is rejected (game fails) or trips enforcement (account risk).
 
 ### 4.3 Ephemeral provisioning vs long-lived mesh
 
-| | Per-room ephemeral (chosen) | Persistent cluster tailnet/network |
-| --- | --- | --- |
-| Isolation | strong (per-room CIDR, credentials die with room) | weak (all users see all games' traffic) |
-| Credential risk | low — short TTL, ephemeral nodes auto-purge (30–60 min) | high — standing keys circulate |
-| Setup cost | join latency ~seconds at room start | zero at room start |
-| Scaling | unbounded room count | flat network, ACL sprawl |
-| Failure mode | control-plane outage blocks new rooms only | outage breaks everyone |
+|                 | Per-room ephemeral (chosen)                                                                                               | Persistent cluster tailnet/network      |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Isolation       | strong — ZeroTier: per-room CIDR; Tailscale: per-room ACL tags (no true per-room subnet, §4.1); credentials die with room | weak (all users see all games' traffic) |
+| Credential risk | low — one-off short-TTL keys, ephemeral nodes auto-purge (30–60 min)                                                      | high — standing keys circulate          |
+| Setup cost      | join latency ~seconds at room start                                                                                       | zero at room start                      |
+| Scaling         | unbounded room count                                                                                                      | flat network, ACL sprawl                |
+| Failure mode    | control-plane outage blocks new rooms only                                                                                | outage breaks everyone                  |
 
 Ephemeral wins on security and correctness; the cost is a provisioning step
 amortized behind the "Host Room" click. A persistent network remains available
@@ -150,10 +180,10 @@ trading isolation for simplicity.
 
 ### 4.4 Cross-platform compatibility
 
-| Platform | Mechanism |
-| --- | --- |
-| Windows | Direct DLL swap (`steam_api64.dll`); backup/restore via engine |
-| Linux native | Swap `libsteam_api.so`; engine paths identical |
+| Platform                      | Mechanism                                                                                                                                                                                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows                       | Direct DLL swap (`steam_api64.dll`); backup/restore via engine                                                                                                                                                                              |
+| Linux native                  | Swap `libsteam_api.so`; engine paths identical                                                                                                                                                                                              |
 | Linux / Steam Deck via Proton | Swap inside the Proton prefix's `drive_c` game dir; emulator ships Windows binaries loaded under Wine. `WINEDLLOVERRIDES="steam_api64=n,b"` not required when physically replacing the DLL but set defensively for wrapper-mode deployments |
 
 Engine operations must be prefix-aware: resolve the real game directory
@@ -162,11 +192,18 @@ through Drop's installed-version records rather than guessing prefix layouts.
 ### 4.5 Additional failure modes
 
 - **Host disconnect mid-session** — server detects via WS heartbeat, triggers
-  host migration; mesh credentials outlive the host until room TTL expires.
+  host-migration per the distributed lease rules (§3.2); mesh credentials
+  outlive the host until room TTL expires.
+- **Coordinator restart/replacement** — rooms and memberships live in the
+  durable room store (§3.2); a replacement coordinator re-reads state and
+  re-pushes stored credentials; in-flight operations resume from the journal.
 - **Clock skew / early expiry** — ephemeral keys carry server-stamped expiry;
   clients refresh before launch if < 10 min remain.
 - **Partial crash between backup and replace** — crash-marker journal written
   before first mutation; startup sweep replays/rolls back the journal.
+- **Stolen Tailscale key** — one-off keys limit exposure to a single node
+  enrollment; teardown additionally removes every node registered under the
+  room's ACL tag (revocation alone does not de-register existing nodes).
 - **Malicious room host** — host controls membership but not member binaries;
   credentials are generated server-side, never by the host.
 
