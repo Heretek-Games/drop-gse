@@ -17,6 +17,24 @@ the Drop server.
 | `packages/drop-addon-client` | Drop client plugin: pre-launch hooks, VPN validation, post-exit teardown, UI extensions |
 | `packages/gse-engine`        | Core emulator patcher: DLL manager, config generator, anti-cheat detection              |
 
+## Automated review
+
+PRs are reviewed by two bots:
+
+- **CodeRabbit** — inline review threads and walkthrough summaries.
+- **OpenCodeReview** (`alibaba/open-code-review`) — LLM-powered review via an
+  OpenAI-compatible endpoint (`.github/workflows/ocr-review.yml`). Re-review on
+  demand by commenting `/open-code-review` (maintainers only).
+
+OpenCodeReview requires these **organization** Actions secrets
+(Org Settings → Secrets and variables → Actions → Organization secrets):
+
+| Secret | Purpose |
+| --- | --- |
+| `LLM_API` | OpenAI-compatible endpoint URL |
+| `LLM_KEY` | Auth token for the endpoint |
+| `LLM_MODEL` | Model name |
+
 ## License
 
 GPL-3.0 — chosen for compatibility with the LGPL-3.0 licensed Goldberg-family
