@@ -15,5 +15,5 @@ Responsibilities:
 
 Integration target: Drop server is a Go HTTP service (`gorilla/mux`) on `:3433`
 with a Nuxt3 front-end; this package provides the coordination plane and the
-API contract consumed by `drop-addon-client`. Skeleton only in this commit —
-see [`docs/architecture/SPECIFICATION.md`](../../docs/architecture/SPECIFICATION.md).
+API contract consumed by `drop-addon-client`. See
+[`docs/architecture/SPECIFICATION.md`](../../docs/architecture/SPECIFICATION.md).

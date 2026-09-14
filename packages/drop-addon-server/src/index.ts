@@ -87,9 +87,15 @@ export class DropGseServerPlugin implements ServerPlugin {
     this.ctx = ctx;
     const compat = new CompatRegistry(compatFromEnv());
     const sink: MeshEventSink = this.meshEvents ?? {
-      memberJoin: (key, userId) => ctx.broadcast(MESH_MEMBER_JOIN, { key, userId }),
-      memberLeave: (key, userId) => ctx.broadcast(MESH_MEMBER_LEAVE, { key, userId }),
-      networkClose: (key) => ctx.broadcast(MESH_NETWORK_CLOSE, { key }),
+      memberJoin: (key, userId) => {
+        ctx.broadcast(MESH_MEMBER_JOIN, { key, userId });
+      },
+      memberLeave: (key, userId) => {
+        ctx.broadcast(MESH_MEMBER_LEAVE, { key, userId });
+      },
+      networkClose: (key) => {
+        ctx.broadcast(MESH_NETWORK_CLOSE, { key });
+      },
     };
     this.store = new RoomStore(
       this.persistence ?? new StorageRoomPersistence(ctx.storage),
@@ -116,7 +122,7 @@ export class DropGseServerPlugin implements ServerPlugin {
             roomId: data.key,
           });
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           ctx.logger.warn(`Failed to record room mesh: ${String(err)}`);
         });
     });
@@ -147,7 +153,7 @@ export class DropGseServerPlugin implements ServerPlugin {
             room: toDiscoverable(room),
           });
         })
-        .catch((err) => {
+        .catch((err: unknown) => {
           ctx.logger.warn(`Failed to record member mesh: ${String(err)}`);
         });
     });

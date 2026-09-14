@@ -4,12 +4,15 @@ Drop desktop client addon for `drop-gse`: launch lifecycle hooks and UI.
 
 Responsibilities:
 
-- **Pre-launch hook** — invoke `gse-engine` to back up originals, deploy the
-  emulator DLL/config set, and point `custom_broadcasts.txt` at mesh peers.
+- **Pre-launch hook** — back up originals through the scoped `ctx.gameFs`,
+  stage the emulator config set, and point `custom_broadcasts.txt` at mesh
+  peers. (Engine-backed staging via `gse-engine` is future work.)
 - **Mesh join is delegated** — joining/leaving the ZeroTier mesh is owned by the
   `drop-zerotier` client addon (see its `pre-launch:network` hook). This addon
   only consumes the peer addresses the GSE server reports for the room.
-- **Post-exit teardown** — restore original binaries and remove staged config.
+- **Post-exit teardown** — restore original binaries, remove staged config, and
+  report newly earned achievements to the core unlock endpoint (portable GSE
+  saves only; a pre-existing `configs.user.ini` is never overwritten).
 - **UI extensions** — "Host Multiplayer Room" / "Join via Drop" actions wired
   into the Drop desktop (Nuxt) game detail view.
 

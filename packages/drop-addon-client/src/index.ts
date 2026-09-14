@@ -15,6 +15,8 @@ import type {
   PluginMetadata,
 } from "@droposs/plugin-sdk";
 
+import { planAchievementSync, readLocalSavePath } from "./achievements.js";
+
 /** Client-storage key holding the room this client is currently attached to. */
 export const ACTIVE_ROOM_KEY = "gse:activeRoom";
 
@@ -23,6 +25,18 @@ export const STEAM_SETTINGS_DIR = "steam_settings";
 export const STEAM_SETTINGS_INI = `${STEAM_SETTINGS_DIR}/settings.ini`;
 export const STEAM_APPID_FILE = "steam_appid.txt";
 export const CUSTOM_BROADCASTS_FILE = "custom_broadcasts.txt";
+
+/** Achievement definitions and portable save location written by the emulator. */
+export const ACHIEVEMENTS_DEFINITIONS_FILE = `${STEAM_SETTINGS_DIR}/achievements.json`;
+export const PORTABLE_SAVE_CONFIG_FILE = `${STEAM_SETTINGS_DIR}/configs.user.ini`;
+export const PORTABLE_SAVE_DIR = "gse_saves";
+export const ACHIEVEMENTS_KNOWN_KEY_PREFIX = "gse:achievements:";
+
+/** Client-storage flag: this launch created the portable-save config itself. */
+export const PORTABLE_SAVE_STAGED_KEY = "gse:portableSaveStaged";
+
+/** Core endpoint receiving one unlock request per newly earned achievement. */
+export const ACHIEVEMENTS_UNLOCK_PATH = "/api/v1/client/achievements/unlock";
 
 /** Steam binaries backed up and restored around a multiplayer launch. */
 export const STEAM_BINARIES = ["steam_api.dll", "steam_api64.dll"] as const;
@@ -73,6 +87,32 @@ function toActiveRoom(room: MemberRoom): ActiveRoom {
     peers,
     expiresAt: room.expiresAt,
   };
+}
+
+/**
+ * Paths (relative to the game directory) where Goldberg-family emulators keep
+ * runtime unlock state. `configuredPath` comes from the user's own
+ * `configs.user.ini` when present.
+ */
+export function achievementSaveCandidates(appId: number, configuredPath?: string): string[] {
+  const roots = [
+    configuredPath,
+    PORTABLE_SAVE_DIR,
+    `${STEAM_SETTINGS_DIR}/${PORTABLE_SAVE_DIR}`,
+    "GSE Saves",
+    STEAM_SETTINGS_DIR,
+  ].filter((root): root is string => typeof root === "string" && root.length > 0);
+
+  const candidates: string[] = [];
+  for (const root of roots) {
+    let normalized = root.replaceAll("\\", "/");
+    while (normalized.endsWith("/")) {
+      normalized = normalized.slice(0, -1);
+    }
+    const candidate = `${normalized}/${appId}/achievements.json`;
+    if (!candidates.includes(candidate)) candidates.push(candidate);
+  }
+  return candidates;
 }
 
 /**
@@ -233,20 +273,122 @@ export class DropGseClientPlugin implements ClientPlugin {
         "",
       ].join("\n"),
     );
+    await this.stageAchievementSaves(ctx, launch);
     ctx.logger.info(`Staged GSE config for room ${room.roomId}`);
   }
 
-  /** Restore backed-up binaries and remove staged emulator config. */
+  /**
+   * Point the emulator's saves at the game directory so the post-exit hook can
+   * read unlock state through the scoped filesystem. A pre-existing
+   * `configs.user.ini` is never overwritten.
+   */
+  private async stageAchievementSaves(
+    ctx: ClientPluginContext,
+    launch: LaunchContext,
+  ): Promise<void> {
+    if (await ctx.gameFs.fileExists(launch.gameId, PORTABLE_SAVE_CONFIG_FILE)) {
+      return;
+    }
+    await ctx.gameFs.writeFile(
+      launch.gameId,
+      PORTABLE_SAVE_CONFIG_FILE,
+      `[user::saves]\nlocal_save_path=${PORTABLE_SAVE_DIR}\n`,
+    );
+    await ctx.storage.set(PORTABLE_SAVE_STAGED_KEY, true);
+  }
+
+  /** Restore backed-up binaries, remove staged config, then report unlocks. */
   private async restore(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
+    const room = await this.activeRoom(ctx, launch.gameId);
+
     for (const binary of STEAM_BINARIES) {
       if (await ctx.gameFs.fileExists(launch.gameId, binary)) {
         await ctx.gameFs.restoreFile(launch.gameId, binary).catch(() => {});
       }
     }
+
+    if (await ctx.storage.get<boolean>(PORTABLE_SAVE_STAGED_KEY)) {
+      await ctx.gameFs.deleteFile(launch.gameId, PORTABLE_SAVE_CONFIG_FILE).catch(() => {});
+      await ctx.storage.delete(PORTABLE_SAVE_STAGED_KEY).catch(() => {});
+    }
+
     for (const file of [STEAM_APPID_FILE, CUSTOM_BROADCASTS_FILE, STEAM_SETTINGS_INI]) {
       await ctx.gameFs.deleteFile(launch.gameId, file).catch(() => {});
     }
     await ctx.storage.delete(ACTIVE_ROOM_KEY).catch(() => {});
+
+    if (room) {
+      await this.syncAchievements(ctx, launch, room.appId).catch((err: unknown) => {
+        ctx.logger.warn(`GSE achievement sync failed: ${String(err)}`);
+      });
+    }
+  }
+
+  private async readGameText(
+    ctx: ClientPluginContext,
+    gameId: string,
+    relativePath: string,
+  ): Promise<string | null> {
+    try {
+      const bytes = await ctx.gameFs.readFile(gameId, relativePath);
+      return new TextDecoder().decode(bytes);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Parse the emulator's achievements metadata and runtime unlock state, then
+   * report ids the platform has not seen yet. Failures are logged and never
+   * fail process teardown.
+   */
+  private async syncAchievements(
+    ctx: ClientPluginContext,
+    launch: LaunchContext,
+    appId: number | undefined,
+  ): Promise<void> {
+    if (!appId) {
+      ctx.logger.debug("No AppID recorded for this room; skipping GSE achievement sync");
+      return;
+    }
+
+    const definitions = await this.readGameText(ctx, launch.gameId, ACHIEVEMENTS_DEFINITIONS_FILE);
+    if (definitions === null) return;
+
+    const configIni = await this.readGameText(ctx, launch.gameId, PORTABLE_SAVE_CONFIG_FILE);
+    const configuredPath = configIni ? readLocalSavePath(configIni) : undefined;
+
+    let earnedJson: string | null = null;
+    for (const candidate of achievementSaveCandidates(appId, configuredPath)) {
+      earnedJson = await this.readGameText(ctx, launch.gameId, candidate);
+      if (earnedJson !== null) break;
+    }
+    if (earnedJson === null) {
+      ctx.logger.debug(
+        `No portable GSE unlock state for AppID ${appId}; skipping achievement sync`,
+      );
+      return;
+    }
+
+    const knownKey = `${ACHIEVEMENTS_KNOWN_KEY_PREFIX}${launch.gameId}`;
+    const known = new Set((await ctx.storage.get<string[]>(knownKey)) ?? []);
+    const plan = planAchievementSync(launch.gameId, definitions, earnedJson, known);
+    if (plan.requests.length === 0) return;
+
+    const reported: string[] = [];
+    for (const request of plan.requests) {
+      try {
+        await ctx.serverRequest("POST", ACHIEVEMENTS_UNLOCK_PATH, request);
+        reported.push(request.key);
+      } catch (err) {
+        ctx.logger.warn(`Failed to report GSE achievement ${request.key}: ${String(err)}`);
+      }
+    }
+
+    if (reported.length > 0) {
+      await ctx.storage.set(knownKey, [...known, ...reported]);
+      ctx.logger.info(`Reported ${reported.length} GSE achievement(s) for "${launch.gameTitle}"`);
+    }
   }
 }
 

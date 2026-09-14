@@ -3,8 +3,12 @@ import assert from "node:assert/strict";
 import { MockClientPluginContext, type LaunchHook } from "@droposs/plugin-sdk";
 import {
   ACTIVE_ROOM_KEY,
+  ACHIEVEMENTS_DEFINITIONS_FILE,
+  ACHIEVEMENTS_KNOWN_KEY_PREFIX,
+  ACHIEVEMENTS_UNLOCK_PATH,
   CUSTOM_BROADCASTS_FILE,
   DropGseClientPlugin,
+  PORTABLE_SAVE_CONFIG_FILE,
   STEAM_APPID_FILE,
   STEAM_SETTINGS_INI,
   type ActiveRoom,
@@ -148,4 +152,112 @@ test("post-exit restore returns the original binary and removes config", async (
   assert.equal(ctx.gameFs.files.has(`42:${STEAM_APPID_FILE}`), false);
   assert.equal(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`), false);
   assert.equal(await ctx.storage.get(ACTIVE_ROOM_KEY), null);
+});
+
+const DEFINITIONS = JSON.stringify([{ name: "ACH_A" }, { name: "ACH_B" }]);
+
+function writeDefinitions(ctx: MockClientPluginContext): void {
+  ctx.gameFs.files.set(
+    `42:${ACHIEVEMENTS_DEFINITIONS_FILE}`,
+    new TextEncoder().encode(DEFINITIONS),
+  );
+}
+
+function writeGameFile(ctx: MockClientPluginContext, path: string, json: string): void {
+  ctx.gameFs.files.set(`42:${path}`, new TextEncoder().encode(json));
+}
+
+function unlockCalls(ctx: MockClientPluginContext) {
+  return ctx.serverRequestLog.calls.filter(
+    (call) => call.method === "POST" && call.path === ACHIEVEMENTS_UNLOCK_PATH,
+  );
+}
+
+test("post-exit reports newly earned achievements to the core unlock endpoint", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  writeDefinitions(ctx);
+
+  await hook(ctx, "pre-launch:stage").execute(LAUNCH);
+  assert.ok(ctx.gameFs.files.has(`42:${PORTABLE_SAVE_CONFIG_FILE}`));
+
+  writeGameFile(
+    ctx,
+    "gse_saves/480/achievements.json",
+    JSON.stringify({
+      ACH_A: { earned: false, earned_time: 0 },
+      ACH_B: { earned: true, earned_time: 42 },
+    }),
+  );
+
+  await hook(ctx, "post-exit:restore").execute(LAUNCH);
+
+  assert.deepEqual(
+    unlockCalls(ctx).map((call) => call.body),
+    [{ gameId: "42", key: "ACH_B" }],
+  );
+  assert.deepEqual(await ctx.storage.get(`${ACHIEVEMENTS_KNOWN_KEY_PREFIX}42`), ["ACH_B"]);
+  assert.equal(ctx.gameFs.files.has(`42:${PORTABLE_SAVE_CONFIG_FILE}`), false);
+});
+
+test("achievement sync skips ids already reported and never blocks teardown", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  await ctx.storage.set(`${ACHIEVEMENTS_KNOWN_KEY_PREFIX}42`, ["ACH_B"]);
+  writeDefinitions(ctx);
+
+  await hook(ctx, "pre-launch:stage").execute(LAUNCH);
+  writeGameFile(
+    ctx,
+    "gse_saves/480/achievements.json",
+    JSON.stringify({ ACH_B: { earned: true } }),
+  );
+
+  await hook(ctx, "post-exit:restore").execute(LAUNCH);
+
+  assert.equal(unlockCalls(ctx).length, 0);
+  assert.equal(await ctx.storage.get(ACTIVE_ROOM_KEY), null);
+});
+
+test("achievement sync stays quiet without portable save state", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  writeDefinitions(ctx);
+
+  await hook(ctx, "post-exit:restore").execute(LAUNCH);
+
+  assert.equal(unlockCalls(ctx).length, 0);
+});
+
+test("stage preserves a pre-existing configs.user.ini and honours its save path", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  writeDefinitions(ctx);
+
+  const existing = "[user::saves]\nlocal_save_path=my_saves\n";
+  writeGameFile(ctx, PORTABLE_SAVE_CONFIG_FILE, existing);
+
+  await hook(ctx, "pre-launch:stage").execute(LAUNCH);
+
+  assert.equal(
+    new TextDecoder().decode(ctx.gameFs.files.get(`42:${PORTABLE_SAVE_CONFIG_FILE}`)),
+    existing,
+  );
+
+  writeGameFile(ctx, "my_saves/480/achievements.json", JSON.stringify({ ACH_A: { earned: true } }));
+
+  await hook(ctx, "post-exit:restore").execute(LAUNCH);
+
+  assert.deepEqual(
+    unlockCalls(ctx).map((call) => call.body),
+    [{ gameId: "42", key: "ACH_A" }],
+  );
+  assert.equal(
+    new TextDecoder().decode(ctx.gameFs.files.get(`42:${PORTABLE_SAVE_CONFIG_FILE}`)),
+    existing,
+  );
 });
