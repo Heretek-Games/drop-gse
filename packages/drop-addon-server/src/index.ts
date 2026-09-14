@@ -1,9 +1,5 @@
 import { createError, readBody } from "h3";
-import type {
-  PluginContext,
-  PluginMetadata,
-  ServerPlugin,
-} from "@droposs/plugin-sdk";
+import type { PluginContext, PluginMetadata, ServerPlugin } from "@droposs/plugin-sdk";
 import { isPublicMeshInfo } from "@heretek-games/zerotier-mesh";
 import { CompatRegistry, compatFromEnv } from "./compat.js";
 import { StorageRoomPersistence } from "./persistence.js";
@@ -92,8 +88,7 @@ export class DropGseServerPlugin implements ServerPlugin {
     const compat = new CompatRegistry(compatFromEnv());
     const sink: MeshEventSink = this.meshEvents ?? {
       memberJoin: (key, userId) => ctx.broadcast(MESH_MEMBER_JOIN, { key, userId }),
-      memberLeave: (key, userId) =>
-        ctx.broadcast(MESH_MEMBER_LEAVE, { key, userId }),
+      memberLeave: (key, userId) => ctx.broadcast(MESH_MEMBER_LEAVE, { key, userId }),
       networkClose: (key) => ctx.broadcast(MESH_NETWORK_CLOSE, { key }),
     };
     this.store = new RoomStore(
@@ -166,10 +161,7 @@ export class DropGseServerPlugin implements ServerPlugin {
         return;
       }
       try {
-        const credential = await this.store.credential(
-          payload.roomId,
-          wsCtx.userId,
-        );
+        const credential = await this.store.credential(payload.roomId, wsCtx.userId);
         const room = await this.store.get(payload.roomId);
         wsCtx.send({
           ok: true,
@@ -217,8 +209,7 @@ export class DropGseServerPlugin implements ServerPlugin {
     // Route: GET /rooms
     ctx.registerRoute("GET", "/rooms", async (_event, context) => {
       await this.store.pruneExpired();
-      const gameId =
-        typeof context.query.gameId === "string" ? context.query.gameId : undefined;
+      const gameId = typeof context.query.gameId === "string" ? context.query.gameId : undefined;
       return { rooms: await this.store.list(gameId) };
     });
 
@@ -289,8 +280,7 @@ export class DropGseServerPlugin implements ServerPlugin {
         throw createError({ statusCode: 404, statusMessage: "Room not found" });
       }
       const isMember =
-        !!context.userId &&
-        room.members.some((member) => member.userId === context.userId);
+        !!context.userId && room.members.some((member) => member.userId === context.userId);
       if (isMember) {
         return {
           room: toMemberView(room, context.userId === room.hostUserId),
@@ -355,10 +345,7 @@ export class DropGseServerPlugin implements ServerPlugin {
         });
       }
 
-      const { closed, room } = await this.store.leave(
-        context.params.id,
-        context.userId,
-      );
+      const { closed, room } = await this.store.leave(context.params.id, context.userId);
       if (closed) {
         ctx.broadcast(`gse:room:${context.params.id}`, {
           type: "room_closed",
@@ -396,10 +383,7 @@ export class DropGseServerPlugin implements ServerPlugin {
 
       let credential;
       try {
-        credential = await this.store.credential(
-          context.params.id,
-          context.userId,
-        );
+        credential = await this.store.credential(context.params.id, context.userId);
       } catch (err) {
         const message = String(err);
         if (message.includes("not a room member")) {

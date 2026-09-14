@@ -238,10 +238,7 @@ test("persistence accepts missing and present mesh info", async () => {
   const withMesh = parseRoom(JSON.parse(JSON.stringify((await store.get(room.id))!)));
   assert.equal(withMesh.mesh?.backend, "zerotier");
 
-  assert.equal(
-    tryParseRoom({ ...room, mesh: { backend: "bogus", expiresAt: 1 } }),
-    undefined,
-  );
+  assert.equal(tryParseRoom({ ...room, mesh: { backend: "bogus", expiresAt: 1 } }), undefined);
 });
 
 test("plugin registers delegation routes and no longer owns mesh or members", async () => {

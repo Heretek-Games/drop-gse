@@ -44,11 +44,7 @@ const MAX_IDENTIFIER_LENGTH = 128;
 const MAX_BINDING_LENGTH = 256;
 
 function requireIdentifier(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_IDENTIFIER_LENGTH
-  ) {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_IDENTIFIER_LENGTH) {
     throw new Error(`invalid ${field}`);
   }
   return value;
@@ -62,10 +58,7 @@ function requireEmulatorBinding(value: unknown): EmulatorBinding {
   if (binding.flavor !== "gbe_fork" && binding.flavor !== "gse_fork") {
     throw new Error("invalid emulator flavor");
   }
-  if (
-    typeof binding.release !== "string" ||
-    binding.release.length > MAX_BINDING_LENGTH
-  ) {
+  if (typeof binding.release !== "string" || binding.release.length > MAX_BINDING_LENGTH) {
     throw new Error("invalid emulator release");
   }
   if (
@@ -142,9 +135,7 @@ export class RoomStore {
       const emulator = requireEmulatorBinding(input.emulator);
       if (
         input.appId !== undefined &&
-        (!Number.isInteger(input.appId) ||
-          input.appId < 0 ||
-          input.appId > 0xffffffff)
+        (!Number.isInteger(input.appId) || input.appId < 0 || input.appId > 0xffffffff)
       ) {
         throw new Error("invalid appId");
       }
@@ -273,10 +264,7 @@ export class RoomStore {
     });
   }
 
-  async leave(
-    roomId: string,
-    userId: string,
-  ): Promise<{ closed: boolean; room?: Room }> {
+  async leave(roomId: string, userId: string): Promise<{ closed: boolean; room?: Room }> {
     return this.withLock(roomId, async () => {
       const room = await this.persistence.getRoom(roomId);
       if (!room) return { closed: false };
