@@ -11,7 +11,7 @@ import {
 import { CompatRegistry, compatFromEnv } from "../src/compat.js";
 import { StorageRoomPersistence } from "../src/persistence.js";
 import type { RoomPersistence } from "../src/persistence.js";
-import { ZtnetBackend } from "../src/ztnet.js";
+import { ZtnetBackend } from "../src/mesh.js";
 import {
   CREDENTIAL_ROTATION_WINDOW_MS,
   HOST_LEASE_MS,

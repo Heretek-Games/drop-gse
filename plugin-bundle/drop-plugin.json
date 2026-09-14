@@ -52,5 +52,12 @@
       "client:storage",
       "client:ws"
     ]
+  },
+  "checksum": "bbff82dfad469732541d7c21f6c5268530061a793d4cf60452eb8d3bfad7671f",
+  "files": {
+    "dist/client.js": "a6dd1bbe1eace25942e28add7d62e555c3962bb0fb962443bf465a1da9d1ec59",
+    "dist/client.js.map": "27c84f6c3c93a4a4d4d8a304e11c1ca941884cd50daa626ea19a575946d23b0e",
+    "dist/server.js": "bbff82dfad469732541d7c21f6c5268530061a793d4cf60452eb8d3bfad7671f",
+    "dist/server.js.map": "ba736eb745a4cc628dc4b5e9773e7abad4c92564fce4a2dab4d0eadbb77534d2"
   }
 }

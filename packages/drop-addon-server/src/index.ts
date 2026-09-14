@@ -10,7 +10,7 @@ import {
 import { StorageRoomPersistence } from "./persistence.js";
 import type { RoomPersistence } from "./persistence.js";
 import { RoomStore } from "./room-store.js";
-import { ZtnetBackend } from "./ztnet.js";
+import { ZtnetBackend } from "./mesh.js";
 import { isMeshMemberId, toDiscoverable, toMemberView } from "./types.js";
 import type { EmulatorBinding, MeshBackend } from "./types.js";
 
