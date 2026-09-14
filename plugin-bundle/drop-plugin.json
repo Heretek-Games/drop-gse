@@ -53,11 +53,11 @@
       "client:ws"
     ]
   },
-  "checksum": "37ec033c1fb719b7f7c8458a98c29b63a84b81ee08736378280d4f08b95e27f5",
+  "checksum": "ef5a794af074807c3d94c4c7b8b463d5905e3f43edc6e3461d48cd440804900d",
   "files": {
     "dist/client.js": "60a6d0b32d772162a625ad856252bad00cba867922ce7f718fdbd32162818ebd",
     "dist/client.js.map": "738212dc3edd45b61d9a4303d16e261a64bafc9187bb6248d15552780754fc15",
-    "dist/server.js": "37ec033c1fb719b7f7c8458a98c29b63a84b81ee08736378280d4f08b95e27f5",
-    "dist/server.js.map": "ee2990743e626285b1be2ceb762388533a056933dca86373110714c94edc35cd"
+    "dist/server.js": "ef5a794af074807c3d94c4c7b8b463d5905e3f43edc6e3461d48cd440804900d",
+    "dist/server.js.map": "7acb0029ce085b190413f7c12d132b60e802a5d625466dfaa555ec2fd2bab730"
   }
 }

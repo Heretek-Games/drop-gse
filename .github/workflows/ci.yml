@@ -22,13 +22,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # @heretek-games/zerotier-mesh is a sibling workspace package (the canonical mesh
-      # provider). Fetch and build it before installing drop-gse.
-      - name: Fetch mesh provider (workspace sibling)
-        run: |
-          git clone --depth 1 https://github.com/Heretek-Games/drop-zerotier.git ../drop-zerotier
-          npm --prefix ../drop-zerotier/packages/mesh-core install
-          npm --prefix ../drop-zerotier/packages/mesh-core run build
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
@@ -42,13 +35,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # @heretek-games/zerotier-mesh is a sibling workspace package (the canonical mesh
-      # provider). Fetch and build it before installing drop-gse.
-      - name: Fetch mesh provider (workspace sibling)
-        run: |
-          git clone --depth 1 https://github.com/Heretek-Games/drop-zerotier.git ../drop-zerotier
-          npm --prefix ../drop-zerotier/packages/mesh-core install
-          npm --prefix ../drop-zerotier/packages/mesh-core run build
       - run: npm ci
       - run: npm run typecheck
 
@@ -84,13 +70,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # @heretek-games/zerotier-mesh is a sibling workspace package (the canonical mesh
-      # provider). Fetch and build it before installing drop-gse.
-      - name: Fetch mesh provider (workspace sibling)
-        run: |
-          git clone --depth 1 https://github.com/Heretek-Games/drop-zerotier.git ../drop-zerotier
-          npm --prefix ../drop-zerotier/packages/mesh-core install
-          npm --prefix ../drop-zerotier/packages/mesh-core run build
       - run: npm ci
       - run: npm run typecheck
       - uses: SonarSource/sonarqube-scan-action@v8
