@@ -1,0 +1,56 @@
+{
+  "id": "drop-gse",
+  "name": "Drop GSE Multiplayer",
+  "version": "0.2.0",
+  "description": "Peer-to-peer multiplayer rooms over virtual mesh VPNs using Goldberg-family Steam emulator wrappers",
+  "author": "Heretek Games",
+  "homepage": "https://github.com/Heretek-Games/drop-gse",
+  "license": "GPL-3.0-or-later",
+  "apiVersion": 2,
+  "category": "multiplayer",
+  "trust": "trusted",
+  "storageVersion": 1,
+  "targets": [
+    "server",
+    "client"
+  ],
+  "capabilities": [
+    "routes",
+    "storage",
+    "websocket",
+    "events",
+    "network",
+    "ui:slot",
+    "ui:play-action",
+    "game:launch-hook",
+    "game:fs",
+    "game:scan",
+    "client:storage",
+    "client:ws"
+  ],
+  "server": {
+    "source": "../packages/drop-addon-server/dist/src/index.js",
+    "entry": "dist/server.js",
+    "storageVersion": 1,
+    "capabilities": [
+      "routes",
+      "storage",
+      "websocket",
+      "events",
+      "network"
+    ]
+  },
+  "client": {
+    "source": "../packages/drop-addon-client/dist/src/index.js",
+    "entry": "dist/client.js",
+    "capabilities": [
+      "ui:slot",
+      "ui:play-action",
+      "game:launch-hook",
+      "game:fs",
+      "game:scan",
+      "client:storage",
+      "client:ws"
+    ]
+  }
+}

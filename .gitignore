@@ -7,6 +7,11 @@ dist/
 build/
 *.tsbuildinfo
 
+# Plugin bundle artifacts (manifest is committed; builds are not)
+plugin-bundle/dist/
+plugin-bundle/dist-package/
+dist-packages/
+
 # Rust / C++
 target/
 *.o

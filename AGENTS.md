@@ -8,11 +8,11 @@ It is maintained by [Heretek Games](https://github.com/Heretek-Games/drop-gse).
 
 ## 1. Architecture & Layout
 
-| Package | Stack | Description |
-| :--- | :--- | :--- |
-| **`packages/gse-engine/`** | Rust crate | Core emulator patcher: target binary discovery (`scanner.rs`), anti-cheat detection (`anticheat.rs`), DLL manifest backup/restore (`dll.rs`), interface export (`interfaces.rs`), path containment (`path_guard.rs`), release staging (`dist.rs`), and atomic patch plan executor (`patch.rs`). |
-| **`packages/drop-addon-client/`** | TypeScript | Desktop client hooks: launch interceptors, room configuration generator (`custom_broadcasts.txt`, `steam_appid.txt`), DLL staging manager, and UI multiplayer modal components. |
-| **`packages/drop-addon-server/`** | TypeScript | Drop server plugin: room orchestration, lease heartbeats, credential lifecycle, and WebSocket event channels (`gse:credential`, `gse:heartbeat`). |
+| Package                           | Stack      | Description                                                                                                                                                                                                                                                                                     |
+| :-------------------------------- | :--------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`packages/gse-engine/`**        | Rust crate | Core emulator patcher: target binary discovery (`scanner.rs`), anti-cheat detection (`anticheat.rs`), DLL manifest backup/restore (`dll.rs`), interface export (`interfaces.rs`), path containment (`path_guard.rs`), release staging (`dist.rs`), and atomic patch plan executor (`patch.rs`). |
+| **`packages/drop-addon-client/`** | TypeScript | Desktop client hooks: launch interceptors, room configuration generator (`custom_broadcasts.txt`, `steam_appid.txt`), DLL staging manager, and UI multiplayer modal components.                                                                                                                 |
+| **`packages/drop-addon-server/`** | TypeScript | Drop server plugin: room orchestration, lease heartbeats, credential lifecycle, and WebSocket event channels (`gse:credential`, `gse:heartbeat`).                                                                                                                                               |
 
 ---
 
