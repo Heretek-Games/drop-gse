@@ -6,7 +6,8 @@ Responsibilities:
 
 - **Pre-launch hook** — back up originals through the scoped `ctx.gameFs`,
   stage the emulator config set, and point `custom_broadcasts.txt` at mesh
-  peers. (Engine-backed staging via `gse-engine` is future work.)
+  peers. (`gse-engine` now ships a `gse-engine` CLI for engine-backed staging;
+  invoking it as a sidecar from this hook is the remaining M4 step.)
 - **Mesh join is delegated** — joining/leaving the ZeroTier mesh is owned by the
   `drop-zerotier` client addon (see its `pre-launch:network` hook). This addon
   only consumes the peer addresses the GSE server reports for the room.
