@@ -59,9 +59,7 @@ export const ANTICHEAT_PROVIDERS: ReadonlyArray<{
   { provider: "denuvo", patterns: ["denuvo", "dbdata.dll"] },
 ];
 
-const ANTICHEAT_PATTERNS: string[] = ANTICHEAT_PROVIDERS.flatMap((entry) => [
-  ...entry.patterns,
-]);
+const ANTICHEAT_PATTERNS: string[] = ANTICHEAT_PROVIDERS.flatMap((entry) => [...entry.patterns]);
 
 /**
  * Host scanner capabilities this plugin uses, typed structurally so it keeps
@@ -279,9 +277,7 @@ export class DropGseClientPlugin implements ClientPlugin {
 
     const detection = await this.detectAntiCheat(ctx, launch.gameId);
     if (detection) {
-      throw new Error(
-        `GSE multiplayer aborted for "${launch.gameTitle}": ${detection.detail}`,
-      );
+      throw new Error(`GSE multiplayer aborted for "${launch.gameTitle}": ${detection.detail}`);
     }
   }
 
@@ -296,9 +292,7 @@ export class DropGseClientPlugin implements ClientPlugin {
       if (matches.length === 0) return undefined;
       const lowered = matches.map((match) => match.toLowerCase());
       const provider = ANTICHEAT_PROVIDERS.find(({ patterns }) =>
-        patterns.some((pattern) =>
-          lowered.some((match) => match.includes(pattern.toLowerCase())),
-        ),
+        patterns.some((pattern) => lowered.some((match) => match.includes(pattern.toLowerCase()))),
       )?.provider;
       return { provider, detail: matches.join(", ") };
     }
