@@ -33,8 +33,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "dependencies": {
-    "@heretek-games/zerotier-mesh": "^0.3.1"
   }
 }
