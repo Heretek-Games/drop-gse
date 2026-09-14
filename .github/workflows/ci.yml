@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # @drop/zerotier-mesh is a sibling workspace package (the canonical mesh
+      # @heretek-games/zerotier-mesh is a sibling workspace package (the canonical mesh
       # provider). Fetch and build it before installing drop-gse.
       - name: Fetch mesh provider (workspace sibling)
         run: |
@@ -42,7 +42,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # @drop/zerotier-mesh is a sibling workspace package (the canonical mesh
+      # @heretek-games/zerotier-mesh is a sibling workspace package (the canonical mesh
       # provider). Fetch and build it before installing drop-gse.
       - name: Fetch mesh provider (workspace sibling)
         run: |
@@ -84,7 +84,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # @drop/zerotier-mesh is a sibling workspace package (the canonical mesh
+      # @heretek-games/zerotier-mesh is a sibling workspace package (the canonical mesh
       # provider). Fetch and build it before installing drop-gse.
       - name: Fetch mesh provider (workspace sibling)
         run: |

@@ -31,7 +31,11 @@ export interface Room {
   /** Last host heartbeat (ms). Used for lease expiry/migration. */
   hostHeartbeatAt: number;
   members: RoomMember[];
-  mesh: PublicMeshInfo;
+  /**
+   * Public mesh info as reported by the mesh provider (`drop-zerotier`). Unset
+   * until the provider confirms provisioning — drop-gse no longer provisions.
+   */
+  mesh?: PublicMeshInfo;
   createdAt: number;
   expiresAt: number;
 }
@@ -43,7 +47,7 @@ export interface DiscoverableRoom {
   versionId: string;
   appId?: number;
   emulator: EmulatorBinding;
-  mesh: PublicMeshInfo;
+  mesh?: PublicMeshInfo;
   memberCount: number;
   createdAt: number;
   expiresAt: number;
@@ -149,7 +153,7 @@ export function isRoom(value: unknown): value is Room {
     typeof room.expiresAt === "number" &&
     Array.isArray(room.members) &&
     room.members.every((member) => !!member && typeof member.userId === "string") &&
-    isMeshInfo(room.mesh) &&
+    (room.mesh === undefined || isMeshInfo(room.mesh)) &&
     isEmulatorBinding(room.emulator)
   );
 }
@@ -190,7 +194,8 @@ export function parseCredential(value: unknown): MeshCredential {
  * Drop the network identifiers from mesh info for non-member discovery: only
  * authenticated members receive them via their credential/room view.
  */
-function redactMesh(mesh: PublicMeshInfo): PublicMeshInfo {
+function redactMesh(mesh: PublicMeshInfo | undefined): PublicMeshInfo | undefined {
+  if (!mesh) return undefined;
   if (mesh.backend === "zerotier") {
     return {
       backend: "zerotier",

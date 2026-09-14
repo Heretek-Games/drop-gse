@@ -1,7 +1,7 @@
 {
   "id": "drop-gse",
   "name": "Drop GSE Multiplayer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Peer-to-peer multiplayer rooms over virtual mesh VPNs using Goldberg-family Steam emulator wrappers",
   "author": "Heretek Games",
   "homepage": "https://github.com/Heretek-Games/drop-gse",
@@ -53,11 +53,11 @@
       "client:ws"
     ]
   },
-  "checksum": "bbff82dfad469732541d7c21f6c5268530061a793d4cf60452eb8d3bfad7671f",
+  "checksum": "37ec033c1fb719b7f7c8458a98c29b63a84b81ee08736378280d4f08b95e27f5",
   "files": {
-    "dist/client.js": "a6dd1bbe1eace25942e28add7d62e555c3962bb0fb962443bf465a1da9d1ec59",
-    "dist/client.js.map": "27c84f6c3c93a4a4d4d8a304e11c1ca941884cd50daa626ea19a575946d23b0e",
-    "dist/server.js": "bbff82dfad469732541d7c21f6c5268530061a793d4cf60452eb8d3bfad7671f",
-    "dist/server.js.map": "ba736eb745a4cc628dc4b5e9773e7abad4c92564fce4a2dab4d0eadbb77534d2"
+    "dist/client.js": "60a6d0b32d772162a625ad856252bad00cba867922ce7f718fdbd32162818ebd",
+    "dist/client.js.map": "738212dc3edd45b61d9a4303d16e261a64bafc9187bb6248d15552780754fc15",
+    "dist/server.js": "37ec033c1fb719b7f7c8458a98c29b63a84b81ee08736378280d4f08b95e27f5",
+    "dist/server.js.map": "ee2990743e626285b1be2ceb762388533a056933dca86373110714c94edc35cd"
   }
 }

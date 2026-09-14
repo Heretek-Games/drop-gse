@@ -15,11 +15,6 @@ import type {
   PluginMetadata,
 } from "@droposs/plugin-sdk";
 
-import type { MeshRoomRef } from "./vpn.js";
-
-export type { MeshRoomRef, MeshBackend, MeshStatus, VpnValidator } from "./vpn.js";
-export { ZeroTierValidator, TailscaleValidator, type TailscaleLocalAPI } from "./vpn.js";
-
 /** Client-storage key holding the room this client is currently attached to. */
 export const ACTIVE_ROOM_KEY = "gse:activeRoom";
 
@@ -52,7 +47,8 @@ export interface DiscoverableRoom {
 export interface MemberRoom extends DiscoverableRoom {
   hostUserId: string;
   members: RoomMember[];
-  mesh: MeshRoomRef;
+  /** Provider-reported mesh reference; join is owned by drop-zerotier. */
+  mesh?: unknown;
 }
 
 /** The slice of room state persisted between the play action and launch. */
@@ -92,7 +88,7 @@ export class DropGseClientPlugin implements ClientPlugin {
   metadata: PluginMetadata = {
     id: "drop-gse",
     name: "Drop GSE Multiplayer",
-    version: "0.2.0",
+    version: "0.3.0",
     description:
       "Peer-to-peer multiplayer rooms over virtual mesh networks using the Goldberg Steam emulator",
     author: "Heretek Games",

@@ -14,7 +14,7 @@ It is maintained by [Heretek Games](https://github.com/Heretek-Games/drop-gse).
 | **`packages/drop-addon-client/`** | TypeScript | Desktop client hooks: launch interceptors, room configuration generator (`custom_broadcasts.txt`, `steam_appid.txt`), DLL staging manager, and UI multiplayer modal components.                                                                                                                 |
 | **`packages/drop-addon-server/`** | TypeScript | Drop server plugin: room orchestration, lease heartbeats, credential lifecycle, and WebSocket event channels (`gse:credential`, `gse:heartbeat`).                                                                                                                                               |
 
-> **Workspace dependency**: `drop-addon-server` consumes `@drop/zerotier-mesh`
+> **Workspace dependency**: `drop-addon-server` consumes `@heretek-games/zerotier-mesh`
 > from the sibling `drop-zerotier` repository (`../drop-zerotier/packages/mesh-core`)
 > as the single mesh-transport implementation. Clone `drop-zerotier` next to
 > `drop-gse` (the Heretek workspace layout) and build `mesh-core` before

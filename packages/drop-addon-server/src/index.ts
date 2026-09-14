@@ -1,23 +1,21 @@
 import { createError, readBody } from "h3";
-import type { PluginContext, PluginMetadata, ServerPlugin } from "@droposs/plugin-sdk";
+import type {
+  PluginContext,
+  PluginMetadata,
+  ServerPlugin,
+} from "@droposs/plugin-sdk";
+import { isPublicMeshInfo } from "@heretek-games/zerotier-mesh";
 import { CompatRegistry, compatFromEnv } from "./compat.js";
-import {
-  InMemoryMeshBackend,
-  TailscaleApiProvisioner,
-  TailscaleBackend,
-  ZeroTierBackend,
-} from "./mesh.js";
 import { StorageRoomPersistence } from "./persistence.js";
 import type { RoomPersistence } from "./persistence.js";
 import { RoomStore } from "./room-store.js";
-import { ZtnetBackend } from "./mesh.js";
-import { isMeshMemberId, toDiscoverable, toMemberView } from "./types.js";
-import type { EmulatorBinding, MeshBackend } from "./types.js";
+import type { MeshEventSink } from "./room-store.js";
+import { toDiscoverable, toMemberView } from "./types.js";
+import type { EmulatorBinding } from "./types.js";
 
 export type {
   DiscoverableRoom,
   EmulatorBinding,
-  MeshBackend,
   MeshCredential,
   PublicMeshInfo,
   Room,
@@ -41,18 +39,29 @@ const DEFAULT_EMULATOR: EmulatorBinding = {
 const PRUNE_INTERVAL_MS = 60_000;
 
 /**
+ * Event-bus channels shared with the mesh provider (`drop-zerotier`). drop-gse
+ * announces membership; the provider reports provisioned networks and assigned
+ * member addresses back.
+ */
+const MESH_MEMBER_JOIN = "mesh:member-join";
+const MESH_MEMBER_LEAVE = "mesh:member-leave";
+const MESH_NETWORK_CLOSE = "mesh:network-close";
+const MESH_NETWORK = "mesh:network";
+const MESH_MEMBER = "mesh:member";
+
+/**
  * Drop GSE multiplayer room coordinator.
  *
- * Rooms are durable (Postgres by default) and mesh-backed by one pluggable
- * `MeshBackend`, chosen by `GSE_MESH_BACKEND` or auto-detected: ZTNET (default)
- * → raw ZeroTier → Tailscale → in-memory. The backend is per-deployment;
- * clients cannot switch it.
+ * Rooms are durable (Postgres by default) and mesh-backed by the canonical
+ * `drop-zerotier` provider. This plugin owns room/lease/credential lifecycle
+ * only: it announces membership over the event bus and consumes the provider's
+ * network/member updates.
  */
 export class DropGseServerPlugin implements ServerPlugin {
   metadata: PluginMetadata = {
     id: "drop-gse",
     name: "Drop GSE Multiplayer",
-    version: "0.2.0",
+    version: "0.3.0",
     description:
       "Peer-to-peer multiplayer rooms over virtual mesh networks using Goldberg Steam emulator",
     author: "Heretek Games",
@@ -60,103 +69,96 @@ export class DropGseServerPlugin implements ServerPlugin {
     apiVersion: PLUGIN_API_VERSION,
     trust: "trusted",
     storageVersion: 1,
-    capabilities: ["routes", "events", "storage", "network", "websocket"],
+    capabilities: ["routes", "events", "storage", "websocket"],
     enabled: true,
   };
 
   private store!: RoomStore;
-  private backend!: MeshBackend;
   private ctx!: PluginContext;
   private pruneTimer: ReturnType<typeof setInterval> | undefined;
 
   /**
    * `persistence` defaults to durable plugin storage (`StorageRoomPersistence`)
-   * created from `ctx.storage`. Tests may inject another `RoomPersistence`.
-   * `backendOverride` overrides the env-selected mesh backend (also tests).
+   * created from `ctx.storage`. Tests may inject another `RoomPersistence` and
+   * a `MeshEventSink` to capture delegation events.
    */
   constructor(
     private readonly persistence?: RoomPersistence,
-    private readonly backendOverride?: MeshBackend,
+    private readonly meshEvents?: MeshEventSink,
   ) {}
-
-  /**
-   * Select the mesh backend from `GSE_MESH_BACKEND` (explicit) or by
-   * auto-detecting configured credentials. Auto order: ZTNET → raw ZeroTier →
-   * Tailscale → in-memory. An explicit value that is unknown or missing its
-   * configuration fails closed instead of silently falling through.
-   */
-  private resolveBackend(): MeshBackend {
-    const selected = (process.env.GSE_MESH_BACKEND ?? "").trim().toLowerCase();
-
-    if (selected === "memory") {
-      return new InMemoryMeshBackend();
-    }
-    if (selected && !["ztnet", "zerotier", "tailscale", "memory"].includes(selected)) {
-      throw new Error(
-        `unknown GSE_MESH_BACKEND '${selected}' (expected ztnet, zerotier, tailscale or memory)`,
-      );
-    }
-    const selectedOr = (name: string) => selected === "" || selected === name;
-
-    // ZTNET-managed controller is the default path.
-    const ztnetUrl = process.env.GSE_ZTNET_URL;
-    const ztnetToken = process.env.GSE_ZTNET_TOKEN;
-    const ztnetOrg = process.env.GSE_ZTNET_ORG;
-    if (selectedOr("ztnet") && ztnetUrl && ztnetToken && ztnetOrg) {
-      return new ZtnetBackend({
-        baseUrl: ztnetUrl,
-        apiToken: ztnetToken,
-        organizationId: ztnetOrg,
-      });
-    }
-
-    const baseUrl = process.env.GSE_ZEROTIER_URL;
-    const authToken = process.env.GSE_ZEROTIER_TOKEN;
-    const controllerNodeId = process.env.GSE_ZEROTIER_NODE;
-    if (selectedOr("zerotier") && baseUrl && authToken && controllerNodeId) {
-      return new ZeroTierBackend({ baseUrl, authToken, controllerNodeId });
-    }
-
-    const tailscaleKey = process.env.GSE_TAILSCALE_API_KEY;
-    const tailnet = process.env.GSE_TAILSCALE_TAILNET;
-    if (selectedOr("tailscale") && tailscaleKey && tailnet) {
-      return new TailscaleBackend(
-        new TailscaleApiProvisioner({
-          apiKey: tailscaleKey,
-          tailnet,
-          tag: process.env.GSE_TAILSCALE_TAG ?? "tag:dropgse",
-        }),
-      );
-    }
-
-    if (selected) {
-      throw new Error(
-        `GSE_MESH_BACKEND='${selected}' is set but its required configuration is missing`,
-      );
-    }
-
-    return new InMemoryMeshBackend();
-  }
 
   init(ctx: PluginContext): void {
     this.ctx = ctx;
     const compat = new CompatRegistry(compatFromEnv());
-    this.backend = this.backendOverride ?? this.resolveBackend();
+    const sink: MeshEventSink = this.meshEvents ?? {
+      memberJoin: (key, userId) => ctx.broadcast(MESH_MEMBER_JOIN, { key, userId }),
+      memberLeave: (key, userId) =>
+        ctx.broadcast(MESH_MEMBER_LEAVE, { key, userId }),
+      networkClose: (key) => ctx.broadcast(MESH_NETWORK_CLOSE, { key }),
+    };
     this.store = new RoomStore(
       this.persistence ?? new StorageRoomPersistence(ctx.storage),
-      this.backend,
+      sink,
       Date.now,
       compat,
     );
 
-    // B7: periodic TTL sweep. unref so tests/CLI don't hang on the timer.
+    // Provide TTL sweep. unref so tests/CLI don't hang on the timer.
     this.pruneTimer = setInterval(() => {
       this.store.pruneExpired().catch(() => {});
     }, PRUNE_INTERVAL_MS);
     this.pruneTimer.unref?.();
 
-    // WebSocket: authenticated credential distribution. The secret is only
-    // ever sent to the authenticated peer that requested it.
+    // Provider reported a provisioned network for a room.
+    ctx.subscribe(MESH_NETWORK, (payload) => {
+      const data = (payload ?? {}) as { key?: unknown; mesh?: unknown };
+      if (typeof data.key !== "string" || !isPublicMeshInfo(data.mesh)) return;
+      void this.store
+        .setRoomMesh(data.key, data.mesh)
+        .then(() => {
+          ctx.broadcast("gse:rooms", {
+            type: "room_updated",
+            roomId: data.key,
+          });
+        })
+        .catch((err) => {
+          ctx.logger.warn(`Failed to record room mesh: ${String(err)}`);
+        });
+    });
+
+    // Provider assigned a mesh address to a member.
+    ctx.subscribe(MESH_MEMBER, (payload) => {
+      const data = (payload ?? {}) as {
+        key?: unknown;
+        userId?: unknown;
+        address?: unknown;
+      };
+      if (typeof data.key !== "string" || typeof data.userId !== "string") {
+        return;
+      }
+      const address = typeof data.address === "string" ? data.address : undefined;
+      void this.store
+        .setMemberMesh(data.key, data.userId, address)
+        .then((room) => {
+          if (!room) return;
+          ctx.broadcast(`gse:room:${room.id}`, {
+            type: "member_updated",
+            roomId: room.id,
+            userId: data.userId,
+            meshAddress: address,
+          });
+          ctx.broadcast("gse:rooms", {
+            type: "room_updated",
+            room: toDiscoverable(room),
+          });
+        })
+        .catch((err) => {
+          ctx.logger.warn(`Failed to record member mesh: ${String(err)}`);
+        });
+    });
+
+    // WebSocket: authenticated credential distribution. The mesh reference is
+    // the provider's; drop-gse never holds a mesh secret.
     ctx.registerWebSocket("gse:credential", async (message, wsCtx) => {
       const payload = (message ?? {}) as { roomId?: string };
       if (!payload.roomId || !wsCtx.userId) {
@@ -164,7 +166,10 @@ export class DropGseServerPlugin implements ServerPlugin {
         return;
       }
       try {
-        const credential = await this.store.credential(payload.roomId, wsCtx.userId);
+        const credential = await this.store.credential(
+          payload.roomId,
+          wsCtx.userId,
+        );
         const room = await this.store.get(payload.roomId);
         wsCtx.send({
           ok: true,
@@ -196,8 +201,7 @@ export class DropGseServerPlugin implements ServerPlugin {
       }
     });
 
-    // Restrict `gse:room:<id>` subscriptions to room members. Without this any
-    // authenticated peer could observe member ids/activity for any room.
+    // Restrict `gse:room:<id>` subscriptions to room members.
     ctx.registerSubscriptionAuthorizer(
       (channel) => channel.startsWith("gse:room:"),
       async (channel, auth) => {
@@ -210,17 +214,11 @@ export class DropGseServerPlugin implements ServerPlugin {
     // Route: GET /compat — known-incompatible games/AppIDs.
     ctx.registerRoute("GET", "/compat", () => compat.info());
 
-    // Route: GET /backend — the mesh backend this deployment is configured
-    // with. There is exactly one per deployment; clients cannot choose it.
-    ctx.registerRoute("GET", "/backend", () => ({
-      backend: this.backend.id,
-      memory: this.backend instanceof InMemoryMeshBackend,
-    }));
-
     // Route: GET /rooms
     ctx.registerRoute("GET", "/rooms", async (_event, context) => {
       await this.store.pruneExpired();
-      const gameId = typeof context.query.gameId === "string" ? context.query.gameId : undefined;
+      const gameId =
+        typeof context.query.gameId === "string" ? context.query.gameId : undefined;
       return { rooms: await this.store.list(gameId) };
     });
 
@@ -271,8 +269,6 @@ export class DropGseServerPlugin implements ServerPlugin {
       } catch (err) {
         const message = String(err);
         ctx.logger.warn(`Failed to create GSE room: ${message}`);
-        // Only surface our own validation messages; backend/controller errors
-        // can carry internal URLs and are logged, not returned.
         let statusCode = 429;
         let statusMessage = "failed to create multiplayer room";
         if (message.includes("known-incompatible")) {
@@ -293,9 +289,9 @@ export class DropGseServerPlugin implements ServerPlugin {
         throw createError({ statusCode: 404, statusMessage: "Room not found" });
       }
       const isMember =
-        !!context.userId && room.members.some((member) => member.userId === context.userId);
+        !!context.userId &&
+        room.members.some((member) => member.userId === context.userId);
       if (isMember) {
-        // Peer node ids are revocation handles: host-only.
         return {
           room: toMemberView(room, context.userId === room.hostUserId),
         };
@@ -350,63 +346,6 @@ export class DropGseServerPlugin implements ServerPlugin {
       }
     });
 
-    // Route: POST /rooms/:id/member — report this node's mesh member id so the
-    // backend can authorize it and assign an address.
-    ctx.registerRoute("POST", "/rooms/:id/member", async (event, context) => {
-      if (!context.userId) {
-        throw createError({
-          statusCode: 401,
-          statusMessage: "Authentication required",
-        });
-      }
-      const body = await readBody<{ memberId?: string }>(event);
-      if (!isMeshMemberId(body?.memberId)) {
-        throw createError({
-          statusCode: 400,
-          statusMessage: "memberId must be a 10-character hex ZeroTier node id",
-        });
-      }
-      try {
-        const room = await this.store.registerMember(
-          context.params.id,
-          context.userId,
-          body.memberId,
-        );
-        // Report the address assigned to *this* member so the client can mark
-        // its mesh as ready without having to know its own user id.
-        const address = room.members.find(
-          (member) => member.userId === context.userId,
-        )?.meshAddress;
-        ctx.broadcast("gse:rooms", {
-          type: "room_updated",
-          room: toDiscoverable(room),
-        });
-        return {
-          room: toMemberView(room, room.hostUserId === context.userId),
-          address,
-        };
-      } catch (err) {
-        const message = String(err);
-        ctx.logger.warn(`Failed to register GSE member: ${message}`);
-        if (message.includes("not a room member")) {
-          throw createError({
-            statusCode: 403,
-            statusMessage: "not a room member",
-          });
-        }
-        if (message.includes("already registered")) {
-          throw createError({
-            statusCode: 409,
-            statusMessage: "mesh node is already registered to another member",
-          });
-        }
-        throw createError({
-          statusCode: 404,
-          statusMessage: "Room not found",
-        });
-      }
-    });
-
     // Route: DELETE /rooms/:id
     ctx.registerRoute("DELETE", "/rooms/:id", async (_event, context) => {
       if (!context.userId) {
@@ -416,7 +355,10 @@ export class DropGseServerPlugin implements ServerPlugin {
         });
       }
 
-      const { closed, room } = await this.store.leave(context.params.id, context.userId);
+      const { closed, room } = await this.store.leave(
+        context.params.id,
+        context.userId,
+      );
       if (closed) {
         ctx.broadcast(`gse:room:${context.params.id}`, {
           type: "room_closed",
@@ -443,7 +385,7 @@ export class DropGseServerPlugin implements ServerPlugin {
       return { success: true, closed: false };
     });
 
-    // Route: POST /rooms/:id/credential — membership-gated mesh credential.
+    // Route: POST /rooms/:id/credential — membership-gated mesh reference.
     ctx.registerRoute("POST", "/rooms/:id/credential", async (_event, context) => {
       if (!context.userId) {
         throw createError({
@@ -454,7 +396,10 @@ export class DropGseServerPlugin implements ServerPlugin {
 
       let credential;
       try {
-        credential = await this.store.credential(context.params.id, context.userId);
+        credential = await this.store.credential(
+          context.params.id,
+          context.userId,
+        );
       } catch (err) {
         const message = String(err);
         if (message.includes("not a room member")) {
@@ -467,8 +412,6 @@ export class DropGseServerPlugin implements ServerPlugin {
       }
 
       const room = await this.store.get(context.params.id);
-      // Notify members a credential is available; the secret itself is only
-      // ever returned over this authenticated, membership-checked call.
       ctx.broadcast(`gse:room:${context.params.id}`, {
         type: "credential_available",
         roomId: context.params.id,

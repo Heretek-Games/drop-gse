@@ -1,6 +1,6 @@
 {
   "name": "drop-gse",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Drop addon: automated P2P multiplayer over mesh VPNs via Steam emulator wrappers",
   "license": "GPL-3.0-or-later",
