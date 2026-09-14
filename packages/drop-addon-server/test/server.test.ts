@@ -4,7 +4,7 @@ import { MockPluginContext, MockPluginStorage } from "@droposs/plugin-sdk";
 import { CompatRegistry } from "../src/compat.js";
 import { DropGseServerPlugin } from "../src/index.js";
 import { StorageRoomPersistence } from "../src/persistence.js";
-import { RoomStore, ROOM_TTL_MS } from "../src/room-store.js";
+import { RoomStore } from "../src/room-store.js";
 import type { MeshEventSink } from "../src/room-store.js";
 import {
   parseRoom,
