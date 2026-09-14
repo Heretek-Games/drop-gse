@@ -4,6 +4,7 @@
 //! Goldberg-family Steam emulator, with or without a mesh. Track B supplies the
 //! peer addresses that end up in `custom_broadcasts.txt`.
 
+pub mod achievements;
 pub mod anticheat;
 pub mod config;
 pub mod dist;
