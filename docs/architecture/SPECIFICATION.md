@@ -267,5 +267,7 @@ through Drop's installed-version records rather than guessing prefix layouts.
 3. **M3 — partial** — TypeScript client lifecycle (anti-cheat gate, DLL
    backup/restore, portable config staging, achievement unlock bridge) ships in
    the external plugin bundle; engine-backed staging is not yet wired.
-4. **M4 — planned** — sidecar/napi `gse-engine` integration, compatibility
-   database, crash-recovery sweep.
+4. **M4 — partial** — the client plugin's crash-recovery sweep is implemented
+   (`recoverInterruptedSession` in `drop-addon-client` restores backups and
+   clears staged config when a session was interrupted); sidecar/napi
+   `gse-engine` integration and the compatibility database remain planned.

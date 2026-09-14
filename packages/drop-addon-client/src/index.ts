@@ -151,6 +151,60 @@ export function achievementSaveCandidates(appId: number, configuredPath?: string
   return candidates;
 }
 
+export interface GseRecoveryResult {
+  recovered: boolean;
+  restored: string[];
+  removedStagedConfig: boolean;
+}
+
+/**
+ * Crash-recovery sweep (M4). A previous session may have patched the Steam
+ * binaries and staged emulator config without a clean `post-exit:restore`
+ * (game crash, host kill, power loss). If a room is still recorded as active,
+ * restore any backups and remove staged files before doing anything else so a
+ * later launch starts from the original game.
+ */
+export async function recoverInterruptedSession(
+  ctx: ClientPluginContext,
+): Promise<GseRecoveryResult> {
+  const room = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
+  if (!room?.gameId) {
+    return { recovered: false, restored: [], removedStagedConfig: false };
+  }
+
+  ctx.logger.warn(`Recovering interrupted GSE session for ${room.gameId}`);
+
+  const restored: string[] = [];
+  for (const binary of STEAM_BINARIES) {
+    if (await ctx.gameFs.fileExists(room.gameId, binary)) {
+      try {
+        await ctx.gameFs.restoreFile(room.gameId, binary);
+        restored.push(binary);
+      } catch {
+        // No backup exists (fresh emulator binary); nothing to restore.
+      }
+    }
+  }
+
+  let removedStagedConfig = false;
+  if (await ctx.storage.get<boolean>(PORTABLE_SAVE_STAGED_KEY)) {
+    try {
+      await ctx.gameFs.deleteFile(room.gameId, PORTABLE_SAVE_CONFIG_FILE);
+      removedStagedConfig = true;
+    } catch {
+      // Already gone.
+    }
+  }
+  for (const file of [STEAM_APPID_FILE, CUSTOM_BROADCASTS_FILE, STEAM_SETTINGS_INI]) {
+    await ctx.gameFs.deleteFile(room.gameId, file).catch(() => {});
+  }
+
+  await ctx.storage.delete(PORTABLE_SAVE_STAGED_KEY).catch(() => {});
+  await ctx.storage.delete(ACTIVE_ROOM_KEY).catch(() => {});
+
+  return { recovered: true, restored, removedStagedConfig };
+}
+
 /**
  * Drop GSE multiplayer client plugin.
  *
@@ -182,7 +236,11 @@ export class DropGseClientPlugin implements ClientPlugin {
     ],
   };
 
-  init(ctx: ClientPluginContext): void {
+  async init(ctx: ClientPluginContext): Promise<void> {
+    await recoverInterruptedSession(ctx).catch((err: unknown) => {
+      ctx.logger.warn(`GSE crash recovery failed: ${String(err)}`);
+    });
+
     ctx.registerPlayAction((gameId) => this.playActions(ctx, gameId));
 
     ctx.registerSlot(
