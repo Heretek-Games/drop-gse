@@ -100,10 +100,7 @@ test("anti-cheat detection aborts the launch pipeline", async () => {
   await plugin.init(ctx);
   await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
 
-  ctx.gameScanner.mockAntiCheat = {
-    detected: true,
-    binaries: ["EasyAntiCheat/EasyAntiCheat.exe"],
-  };
+  ctx.gameScanner.mockInstalledFiles = ["EasyAntiCheat/EasyAntiCheat.exe"];
 
   await assert.rejects(
     () => Promise.resolve(hook(ctx, "pre-launch:validate").execute(LAUNCH)),
@@ -111,18 +108,26 @@ test("anti-cheat detection aborts the launch pipeline", async () => {
   );
 });
 
-test("anti-cheat detection prefers the generic findFiles capability", async () => {
+test("anti-cheat detection falls back to a legacy checkAntiCheat host", async () => {
   const ctx = new MockClientPluginContext("drop-gse");
   const plugin = new DropGseClientPlugin();
   await plugin.init(ctx);
   await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
 
-  // A newer host exposes findFiles; the legacy checkAntiCheat is left unset.
-  (
-    ctx.gameScanner as unknown as {
-      findFiles: (gameId: string, patterns: string[]) => Promise<string[]>;
-    }
-  ).findFiles = async () => ["EasyAntiCheat/EasyAntiCheat.exe"];
+  // Simulate a pre-findFiles host: hide the generic capability and expose the
+  // legacy checkAntiCheat method instead.
+  const scanner = ctx.gameScanner as unknown as {
+    findFiles?: (gameId: string, patterns: string[]) => Promise<string[]>;
+    checkAntiCheat?: (gameId: string) => Promise<{
+      detected: boolean;
+      binaries?: string[];
+    }>;
+  };
+  scanner.findFiles = undefined;
+  scanner.checkAntiCheat = async () => ({
+    detected: true,
+    binaries: ["EasyAntiCheat/EasyAntiCheat.exe"],
+  });
 
   await assert.rejects(
     () => Promise.resolve(hook(ctx, "pre-launch:validate").execute(LAUNCH)),
