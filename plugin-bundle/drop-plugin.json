@@ -55,8 +55,8 @@
   },
   "checksum": "3419a1d9a58e94252f2de05016eae1ab50416c06fe583039e0dfe1fc0f841588",
   "files": {
-    "dist/client.js": "ff44c9c55aba59845eac24f368d737fd227eac61a23641937c025494f53b6cba",
-    "dist/client.js.map": "ef7fbe37f2e579d47e5a052843f686d3f4c4055a9da77ba0c6acfa39d62f7819",
+    "dist/client.js": "4aeab6424e14f5135acb4f8b8dddf3004884ae60de8ed8b26a1cfdaf71ece0bc",
+    "dist/client.js.map": "12a1c1041ccac4cbd1acf17b6353253f147c4fd26bf6055c710c3ba23084492f",
     "dist/server.js": "3419a1d9a58e94252f2de05016eae1ab50416c06fe583039e0dfe1fc0f841588",
     "dist/server.js.map": "a379d5ba9c919199cf32f9e1866a40fb6a7a2628743e256be8d29be1f44a5ff2"
   }

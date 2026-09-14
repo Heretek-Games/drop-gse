@@ -105,7 +105,10 @@ export function achievementSaveCandidates(appId: number, configuredPath?: string
 
   const candidates: string[] = [];
   for (const root of roots) {
-    const normalized = root.replace(/\\/g, "/").replace(/\/+$/, "");
+    let normalized = root.replaceAll("\\", "/");
+    while (normalized.endsWith("/")) {
+      normalized = normalized.slice(0, -1);
+    }
     const candidate = `${normalized}/${appId}/achievements.json`;
     if (!candidates.includes(candidate)) candidates.push(candidate);
   }

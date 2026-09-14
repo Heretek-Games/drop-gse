@@ -100,22 +100,29 @@ export function parseEarnedAchievementKeys(json: string): string[] {
     return [];
   }
 
-  const keys: string[] = [];
-  if (Array.isArray(parsed)) {
-    for (const entry of parsed) {
-      if (!entry || typeof entry !== "object") continue;
-      const record = entry as Record<string, unknown>;
-      if (!earnedFlag(record)) continue;
-      const key = asString(record.name) ?? asString(record.id);
-      if (key) keys.push(key);
-    }
-    return keys;
-  }
-
+  if (Array.isArray(parsed)) return earnedKeysFromArray(parsed);
   if (parsed && typeof parsed === "object") {
-    for (const [key, entry] of Object.entries(parsed as Record<string, unknown>)) {
-      if (key.length > 0 && earnedFlag(entry)) keys.push(key);
-    }
+    return earnedKeysFromObject(parsed as Record<string, unknown>);
+  }
+  return [];
+}
+
+function earnedKeysFromArray(entries: unknown[]): string[] {
+  const keys: string[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    if (!earnedFlag(record)) continue;
+    const key = asString(record.name) ?? asString(record.id);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+function earnedKeysFromObject(map: Record<string, unknown>): string[] {
+  const keys: string[] = [];
+  for (const [key, entry] of Object.entries(map)) {
+    if (key.length > 0 && earnedFlag(entry)) keys.push(key);
   }
   return keys;
 }
@@ -126,19 +133,21 @@ export function parseEarnedAchievementKeys(json: string): string[] {
  */
 export function readLocalSavePath(ini: string): string | undefined {
   let section = "";
-  for (const rawLine of ini.split(/\r?\n/)) {
+  for (const rawLine of ini.split("\n")) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith(";") || line.startsWith("#")) continue;
-    const sectionMatch = /^\[(.+)\]$/.exec(line);
-    if (sectionMatch) {
-      section = sectionMatch[1]!.trim().toLowerCase();
+
+    if (line.startsWith("[") && line.endsWith("]")) {
+      section = line.slice(1, -1).trim().toLowerCase();
       continue;
     }
     if (section !== "user::saves") continue;
-    const assignment = /^local_save_path\s*=\s*(.+)$/i.exec(line);
-    if (assignment && assignment[1]!.trim().length > 0) {
-      return assignment[1]!.trim();
-    }
+
+    const separator = line.indexOf("=");
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (key === "local_save_path" && value.length > 0) return value;
   }
   return undefined;
 }
