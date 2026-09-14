@@ -1,7 +1,14 @@
 # drop-gse Architecture Specification
 
-> Status: draft v0.1 (Phase 2 of the initial architecture audit).
+> Status: draft v0.2 (Phase 2 of the initial architecture audit).
 > Companion document: [`docs/research/COMPARATIVE_ANALYSIS.md`](../research/COMPARATIVE_ANALYSIS.md).
+>
+> Implementation note: the shipped artifact is the TypeScript fullstack plugin
+> (`drop-addon-client` + `drop-addon-server`). The Rust `gse-engine` crate is
+> currently a reference library — it is not referenced by either addon's
+> `package.json` nor by `plugin-bundle/drop-plugin.json`, and no
+> `system:sidecar` capability is declared. Engine-backed staging is future work
+> (§3.1, §6/M4).
 
 ## 1. Overview
 
@@ -19,12 +26,13 @@ everything on exit.
 └──────┬──────┘                  └────────┬─────────┘
        │ pre/post launch hooks            │ provisions
        ▼                                  ▼
-┌─────────────┐   custom_broadcasts  ┌──────────────────┐
-│ gse-engine  │                      │ Tailscale/ZeroTier│
-│ DLL+config  │                      │ control plane     │
-└──────┬──────┘                      └────────┬─────────┘
-       │ UDP :47584 announce/lobby            │
-       ▼                                      ▼
+┌─────────────────────┐  custom_broadcasts  ┌──────────────────┐
+│ drop-addon-client   │                     │ Tailscale/ZeroTier│
+│ (TS) DLL+config     │                     │ control plane     │
+│ [gse-engine: future]│                     └────────┬─────────┘
+└──────┬──────────────┘                              │
+       │ UDP :47584 announce/lobby                    │
+       ▼                                              ▼
    ════════════════ mesh VPN data plane (room subnet) ════════════════
 ```
 
@@ -46,9 +54,14 @@ piece can be upstreamed independently.
 
 ## 3. Component specification
 
-### 3.1 `gse-engine` (Rust)
+### 3.1 `gse-engine` (Rust) — reference library (not shipped)
 
-Deterministic patcher library invoked by the client addon.
+Deterministic patcher/scanner crate. It is tested in CI and used as the
+specification/implementation of the
+patch loop, but **it is not invoked by the shipped plugin**: neither addon
+`package.json` depends on it and `plugin-bundle/drop-plugin.json` declares no
+`system:sidecar`. The shipping launch pipeline is `drop-addon-client` (§3.3).
+Wiring the crate in-process (napi) or as a sidecar is tracked as M4.
 
 - **Scanner** — locate steam_api targets
   (`steam_api.dll`, `steam_api64.dll`, `libsteam_api.so`, plus `steamclient*.dll`)
@@ -62,6 +75,9 @@ Deterministic patcher library invoked by the client addon.
 - **Config writer** — generate `steam_settings/{configs.main.ini,
 steam_appid.txt, steam_interfaces.txt, custom_broadcasts.txt}` with room peer
   addresses; flavor-aware (gbe_fork vs gse_fork INI keys).
+- **Achievements** — parse Goldberg `achievements.json` and diff unlocks; the
+  same algorithms are mirrored (and currently used) in the TS client bridge
+  (§3.3).
 
 ### 3.2 `drop-addon-server`
 
@@ -123,8 +139,19 @@ Runs inside/near the Drop desktop process around every launch:
 pre-launch:
   anticheat-check → dll-backup → config-deploy → mesh-join → LAUNCH
 post-exit (always runs):
-  dll-restore → config-remove → mesh-leave
+  dll-restore → config-remove → achievement-unlock-sync
 ```
+
+**Achievement bridge.** On exit the client parses
+`steam_settings/achievements.json` (definitions) and the emulator's runtime
+`<save>/<appId>/achievements.json` (Goldberg `earned` flags), diffs earned ids
+against the ids already reported (client storage), and POSTs each new unlock to
+the core `POST /api/v1/client/achievements/unlock` endpoint. The runtime file
+lives inside the game directory only under portable saves, so when
+`steam_settings/configs.user.ini` does not exist the plugin stages
+`local_save_path=gse_saves` for the session and removes it on exit; a
+pre-existing user config is honoured and never overwritten. Sync failures are
+logged and never block teardown.
 
 Failure semantics: any pre-launch failure aborts and rolls back completed
 stages in reverse order; post-exit failures are logged and retried, never
@@ -232,7 +259,13 @@ through Drop's installed-version records rather than guessing prefix layouts.
 
 ## 6. Milestones
 
-1. **M1** — gse-engine patch/config loop complete with tests (Windows + Linux).
-2. **M2** — server room manager + one mesh backend (Tailscale) end-to-end.
-3. **M3** — client lifecycle integration behind a feature flag; UI actions.
-4. **M4** — ZeroTier backend, compatibility database, crash-recovery sweep.
+1. **M1 — done (reference-only)** — `gse-engine` patch/config loop complete
+   with tests (Windows + Linux) and run in CI. The crate is not wired into the
+   shipped plugin (§3.1).
+2. **M2 — done** — server room manager + mesh backend end-to-end; transport is
+   delegated to the canonical `@heretek-games/zerotier-mesh` provider.
+3. **M3 — partial** — TypeScript client lifecycle (anti-cheat gate, DLL
+   backup/restore, portable config staging, achievement unlock bridge) ships in
+   the external plugin bundle; engine-backed staging is not yet wired.
+4. **M4 — planned** — sidecar/napi `gse-engine` integration, compatibility
+   database, crash-recovery sweep.

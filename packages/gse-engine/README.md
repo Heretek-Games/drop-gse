@@ -2,6 +2,12 @@
 
 Core emulator patching engine for `drop-gse`.
 
+> **Status: reference library.** The crate is tested in CI but is not wired
+> into the shipped plugin bundle: neither addon `package.json` depends on it
+> and no `system:sidecar` capability is declared. The shipping launch pipeline
+> is the TypeScript `drop-addon-client`. Sidecar/napi integration is planned
+> (M4 in the architecture specification).
+
 Responsibilities (per the architecture specification, Phase 2):
 
 - **DLL manager** — backup (`*.orig`), swap, and restore of `steam_api.dll`,
@@ -15,5 +21,5 @@ Responsibilities (per the architecture specification, Phase 2):
   onto mesh VPN peers.
 
 Language: Rust (native, cross-platform: Windows + Linux/Proton prefixes).
-Skeleton only in this commit — see
+See
 [`docs/architecture/SPECIFICATION.md`](../../docs/architecture/SPECIFICATION.md).
