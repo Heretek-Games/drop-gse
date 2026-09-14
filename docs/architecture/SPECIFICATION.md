@@ -4,11 +4,11 @@
 > Companion document: [`docs/research/COMPARATIVE_ANALYSIS.md`](../research/COMPARATIVE_ANALYSIS.md).
 >
 > Implementation note: the shipped artifact is the TypeScript fullstack plugin
-> (`drop-addon-client` + `drop-addon-server`). The Rust `gse-engine` crate is
-> currently a reference library — it is not referenced by either addon's
-> `package.json` nor by `plugin-bundle/drop-plugin.json`, and no
-> `system:sidecar` capability is declared. Engine-backed staging is future work
-> (§3.1, §6/M4).
+> (`drop-addon-client` + `drop-addon-server`). The Rust `gse-engine` crate is a
+> library **plus a `gse-engine` CLI binary** (`scan`, `patch`, `restore`,
+> `interfaces`), ready to be invoked as a sidecar, but neither addon
+> `package.json` depends on it and no `system:sidecar` capability is declared
+> yet. Engine-backed staging is the remaining M4 integration step.
 
 ## 1. Overview
 
@@ -54,14 +54,14 @@ piece can be upstreamed independently.
 
 ## 3. Component specification
 
-### 3.1 `gse-engine` (Rust) — reference library (not shipped)
+### 3.1 `gse-engine` (Rust) — library + CLI (sidecar-ready)
 
-Deterministic patcher/scanner crate. It is tested in CI and used as the
-specification/implementation of the
-patch loop, but **it is not invoked by the shipped plugin**: neither addon
-`package.json` depends on it and `plugin-bundle/drop-plugin.json` declares no
-`system:sidecar`. The shipping launch pipeline is `drop-addon-client` (§3.3).
-Wiring the crate in-process (napi) or as a sidecar is tracked as M4.
+Deterministic patcher/scanner crate. Tested in CI and shipped as a
+`gse-engine` CLI binary (`scan`, `patch`, `restore`, `interfaces`) with JSON
+output. The addon does not invoke it yet: neither `package.json` depends on the
+crate and `plugin-bundle/drop-plugin.json` declares no `system:sidecar`. The
+shipping launch pipeline remains `drop-addon-client` (§3.3). Wiring the binary
+as a sidecar (or the crate via napi) is the remaining M4 step.
 
 - **Scanner** — locate steam_api targets
   (`steam_api.dll`, `steam_api64.dll`, `libsteam_api.so`, plus `steamclient*.dll`)
@@ -268,6 +268,6 @@ through Drop's installed-version records rather than guessing prefix layouts.
    backup/restore, portable config staging, achievement unlock bridge) ships in
    the external plugin bundle; engine-backed staging is not yet wired.
 4. **M4 — partial** — the client plugin's crash-recovery sweep is implemented
-   (`recoverInterruptedSession` in `drop-addon-client` restores backups and
-   clears staged config when a session was interrupted); sidecar/napi
-   `gse-engine` integration and the compatibility database remain planned.
+   (`recoverInterruptedSession` in `drop-addon-client`), and `gse-engine` now
+   builds a `gse-engine` CLI binary ready to sidecar; invoking it from the addon
+   and the compatibility database remain planned.

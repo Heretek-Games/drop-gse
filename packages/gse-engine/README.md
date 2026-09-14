@@ -2,11 +2,23 @@
 
 Core emulator patching engine for `drop-gse`.
 
-> **Status: reference library.** The crate is tested in CI but is not wired
-> into the shipped plugin bundle: neither addon `package.json` depends on it
-> and no `system:sidecar` capability is declared. The shipping launch pipeline
-> is the TypeScript `drop-addon-client`. Sidecar/napi integration is planned
-> (M4 in the architecture specification).
+> **Status: library + `gse-engine` CLI binary.** The crate is tested in CI and
+> now ships a process (`scan`, `patch`, `restore`, `interfaces`) that the Drop
+> client addon can invoke as a sidecar (M4). The addon still uses its
+> TypeScript pipeline for staging; wiring it to this binary is the remaining
+> sidecar integration step.
+
+```sh
+# Discover targets and anti-cheat markers
+gse-engine scan /path/to/game
+
+# Patch (back up originals + write steam_settings) and restore
+gse-engine patch --game-dir /path/to/game --emulator-dir ./goldberg \
+  --app-id 12345 --peers 10.0.0.2,10.0.0.3 [--targets steam_api64.dll] [--flavor gse]
+gse-engine restore --game-dir /path/to/game
+```
+
+Each command prints a single JSON object on success.
 
 Responsibilities (per the architecture specification, Phase 2):
 
