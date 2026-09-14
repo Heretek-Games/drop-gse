@@ -41,6 +41,44 @@ export const ACHIEVEMENTS_UNLOCK_PATH = "/api/v1/client/achievements/unlock";
 /** Steam binaries backed up and restored around a multiplayer launch. */
 export const STEAM_BINARIES = ["steam_api.dll", "steam_api64.dll"] as const;
 
+/**
+ * Anti-cheat providers and the path fragments that identify them. This domain
+ * knowledge lives in the plugin rather than the generic client host, which
+ * only exposes a pattern-based `findFiles` primitive.
+ */
+export const ANTICHEAT_PROVIDERS: ReadonlyArray<{
+  provider: string;
+  patterns: readonly string[];
+}> = [
+  {
+    provider: "easyanticheat",
+    patterns: ["easyanticheat", "eac_server", "easyanticheat_x64.dll"],
+  },
+  { provider: "battleye", patterns: ["battleye", "beservice", "beclient"] },
+  { provider: "vanguard", patterns: ["vgk.sys", "vgc.exe"] },
+  { provider: "denuvo", patterns: ["denuvo", "dbdata.dll"] },
+];
+
+const ANTICHEAT_PATTERNS: string[] = ANTICHEAT_PROVIDERS.flatMap((entry) => [
+  ...entry.patterns,
+]);
+
+/**
+ * Host scanner capabilities this plugin uses, typed structurally so it keeps
+ * compiling against SDK versions that expose either the generic `findFiles`
+ * primitive or the legacy `checkAntiCheat` method.
+ */
+interface AntiCheatScannerCaps {
+  findFiles?: (gameId: string, patterns: string[]) => Promise<string[]>;
+  checkAntiCheat?: (gameId: string) => Promise<{
+    detected: boolean;
+    provider?: string;
+    reason?: string;
+    binaries?: string[];
+    files?: string[];
+  }>;
+}
+
 export interface RoomMember {
   userId: string;
   meshAddress?: string;
@@ -230,20 +268,57 @@ export class DropGseClientPlugin implements ClientPlugin {
   /**
    * Fail-closed anti-cheat gate. Any detection aborts the launch so a modified
    * `steam_api` binary can never be presented to EasyAntiCheat/BattlEye.
+   *
+   * Uses the generic `findFiles` host primitive when available and falls back
+   * to the legacy `checkAntiCheat` capability for older hosts. Fails closed if
+   * the host exposes neither.
    */
   private async validate(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
     const room = await this.activeRoom(ctx, launch.gameId);
     if (!room) return;
 
-    const report = await ctx.gameScanner.checkAntiCheat(launch.gameId);
-    if (report.detected) {
+    const detection = await this.detectAntiCheat(ctx, launch.gameId);
+    if (detection) {
+      throw new Error(
+        `GSE multiplayer aborted for "${launch.gameTitle}": ${detection.detail}`,
+      );
+    }
+  }
+
+  private async detectAntiCheat(
+    ctx: ClientPluginContext,
+    gameId: string,
+  ): Promise<{ provider?: string; detail: string } | undefined> {
+    const scanner = ctx.gameScanner as unknown as AntiCheatScannerCaps;
+
+    if (typeof scanner.findFiles === "function") {
+      const matches = await scanner.findFiles(gameId, ANTICHEAT_PATTERNS);
+      if (matches.length === 0) return undefined;
+      const lowered = matches.map((match) => match.toLowerCase());
+      const provider = ANTICHEAT_PROVIDERS.find(({ patterns }) =>
+        patterns.some((pattern) =>
+          lowered.some((match) => match.includes(pattern.toLowerCase())),
+        ),
+      )?.provider;
+      return { provider, detail: matches.join(", ") };
+    }
+
+    if (typeof scanner.checkAntiCheat === "function") {
+      const report = await scanner.checkAntiCheat(gameId);
+      if (!report.detected) return undefined;
       const detail =
         report.reason ??
         (report.binaries && report.binaries.length > 0
           ? report.binaries.join(", ")
-          : "anti-cheat binaries present");
-      throw new Error(`GSE multiplayer aborted for "${launch.gameTitle}": ${detail}`);
+          : report.files && report.files.length > 0
+            ? report.files.join(", ")
+            : "anti-cheat binaries present");
+      return { provider: report.provider, detail };
     }
+
+    throw new Error(
+      "GSE anti-cheat preflight unavailable: the client host exposes no file-scanning capability",
+    );
   }
 
   /**

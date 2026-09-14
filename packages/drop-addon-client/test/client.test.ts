@@ -111,6 +111,25 @@ test("anti-cheat detection aborts the launch pipeline", async () => {
   );
 });
 
+test("anti-cheat detection prefers the generic findFiles capability", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  const plugin = new DropGseClientPlugin();
+  await plugin.init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+
+  // A newer host exposes findFiles; the legacy checkAntiCheat is left unset.
+  (
+    ctx.gameScanner as unknown as {
+      findFiles: (gameId: string, patterns: string[]) => Promise<string[]>;
+    }
+  ).findFiles = async () => ["EasyAntiCheat/EasyAntiCheat.exe"];
+
+  await assert.rejects(
+    () => Promise.resolve(hook(ctx, "pre-launch:validate").execute(LAUNCH)),
+    /GSE multiplayer aborted/,
+  );
+});
+
 test("stage backs up binaries and writes confined emulator config", async () => {
   const ctx = new MockClientPluginContext("drop-gse");
   await new DropGseClientPlugin().init(ctx);
