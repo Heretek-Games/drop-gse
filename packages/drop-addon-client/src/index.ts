@@ -179,7 +179,7 @@ export class DropGseClientPlugin implements ClientPlugin {
 
   private async activeRoom(ctx: ClientPluginContext, gameId: string): Promise<ActiveRoom | null> {
     const room = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
-    if (!room || room.gameId !== gameId) return null;
+    if (room?.gameId !== gameId) return null;
     if (room.expiresAt && room.expiresAt < Date.now()) {
       await ctx.storage.delete(ACTIVE_ROOM_KEY);
       return null;

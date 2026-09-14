@@ -96,7 +96,7 @@ jobs:
             core.setOutput('head_sha', pullRequest.head.sha);
 
       - name: Run OpenCodeReview
-        uses: alibaba/open-code-review@main
+        uses: alibaba/open-code-review@813d5897cb025f329e29ed49b6e8bb2c2d15814a # main
         with:
           llm_url: ${{ secrets.LLM_API }}
           llm_auth_token: ${{ secrets.LLM_KEY }}
