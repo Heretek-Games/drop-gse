@@ -19,7 +19,6 @@
     "storage",
     "websocket",
     "events",
-    "network",
     "ui:slot",
     "ui:play-action",
     "game:launch-hook",
@@ -36,8 +35,7 @@
       "routes",
       "storage",
       "websocket",
-      "events",
-      "network"
+      "events"
     ]
   },
   "client": {

@@ -11,10 +11,10 @@ the Drop server.
 
 ## Packages
 
-| Package                      | Role                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `packages/drop-addon-server` | Drop server plugin: room orchestration, mesh token distribution, lobby registry                                          |
-| `packages/drop-addon-client` | Drop client plugin: pre-launch hooks, VPN validation, post-exit teardown, achievement unlock bridge, UI extensions       |
+| Package                      | Role                                                                                                                               |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/drop-addon-server` | Drop server plugin: room orchestration, mesh token distribution, lobby registry                                                    |
+| `packages/drop-addon-client` | Drop client plugin: pre-launch hooks, VPN validation, post-exit teardown, achievement unlock bridge, UI extensions                 |
 | `packages/gse-engine`        | Emulator patcher crate + `gse-engine` CLI (`scan`/`patch`/`restore`/`interfaces`), sidecar-ready; the addon does not invoke it yet |
 
 ## Automated review
