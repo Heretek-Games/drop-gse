@@ -42,7 +42,7 @@ pub const ANTICHEAT_MARKERS: &[&str] = &[
 ];
 
 /// Maximum recursion depth below `game_dir`.
-const MAX_SCAN_DEPTH: usize = 4;
+const MAX_SCAN_DEPTH: usize = 8;
 
 /// Recursively scan `game_dir` for anti-cheat markers.
 ///
