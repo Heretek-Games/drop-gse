@@ -21,7 +21,7 @@
     "pack": "drop-plugin pack plugin-bundle dist-packages"
   },
   "devDependencies": {
-    "@droposs/plugin-cli": "^0.2.0",
+    "@droposs/plugin-cli": "file:../drop-plugin-sdk/packages/plugin-cli",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.3.0",
     "@typescript-eslint/eslint-plugin": "^8.18.0",

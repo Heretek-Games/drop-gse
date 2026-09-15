@@ -13,7 +13,7 @@
     "test": "node --test dist/test/*.js"
   },
   "dependencies": {
-    "@droposs/plugin-sdk": "^0.5.9"
+    "@droposs/plugin-sdk": "file:../../../drop-plugin-sdk/packages/plugin-sdk"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

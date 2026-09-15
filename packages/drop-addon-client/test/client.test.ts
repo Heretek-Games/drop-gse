@@ -145,7 +145,7 @@ test("stage backs up binaries and writes confined emulator config", async () => 
 
   await hook(ctx, "pre-launch:stage").execute(LAUNCH);
 
-  assert.ok(ctx.gameFs.backups.has("42:steam_api64.dll"));
+  assert.ok(ctx.gameFs.files.has("42:steam_api64.dll.drop-backup"));
   assert.ok(ctx.gameFs.files.has(`42:${STEAM_APPID_FILE}`));
   assert.ok(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`));
   assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_INI}`));
