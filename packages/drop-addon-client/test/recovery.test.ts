@@ -41,16 +41,11 @@ test("recovers an interrupted session by restoring backups and clearing staged f
   assert.deepEqual(result.restored, ["steam_api64.dll"]);
   assert.equal(result.removedStagedConfig, true);
 
-  const restored = new TextDecoder().decode(
-    await ctx.gameFs.readFile("game-1", "steam_api64.dll"),
-  );
+  const restored = new TextDecoder().decode(await ctx.gameFs.readFile("game-1", "steam_api64.dll"));
   assert.equal(restored, "original");
   assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_APPID_FILE), false);
   assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_SETTINGS_INI), false);
-  assert.equal(
-    await ctx.gameFs.fileExists("game-1", PORTABLE_SAVE_CONFIG_FILE),
-    false,
-  );
+  assert.equal(await ctx.gameFs.fileExists("game-1", PORTABLE_SAVE_CONFIG_FILE), false);
   assert.equal(await ctx.storage.get(ACTIVE_ROOM_KEY), null);
   assert.equal(await ctx.storage.get(PORTABLE_SAVE_STAGED_KEY), null);
 
