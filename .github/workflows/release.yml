@@ -29,11 +29,48 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Build
+      - name: Build TypeScript workspaces
         run: npm run build
 
       - name: Test
         run: npm test
+
+      - name: Build gse-engine sidecar binaries (linux-x64 musl)
+        uses: houseabsolute/actions-rust-cross@986c02d1d8f75fc496f5e5f6ffc9614ff0e8fb26 # v1.0.5
+        with:
+          toolchain: nightly
+          target: x86_64-unknown-linux-musl
+          args: "--locked --release"
+          working-directory: packages/gse-engine
+          strip: true
+
+      - name: Build gse-engine sidecar binaries (windows-x64)
+        uses: houseabsolute/actions-rust-cross@986c02d1d8f75fc496f5e5f6ffc9614ff0e8fb26 # v1.0.5
+        with:
+          toolchain: nightly
+          target: x86_64-pc-windows-msvc
+          args: "--locked --release"
+          working-directory: packages/gse-engine
+          strip: true
+
+      - name: Build gse-engine sidecar binaries (macos-arm64)
+        uses: houseabsolute/actions-rust-cross@986c02d1d8f75fc496f5e5f6ffc9614ff0e8fb26 # v1.0.5
+        with:
+          toolchain: nightly
+          target: aarch64-apple-darwin
+          args: "--locked --release"
+          working-directory: packages/gse-engine
+          strip: true
+
+      - name: Stage sidecar binaries into the plugin bundle
+        run: |
+          mkdir -p plugin-bundle/sidecars/linux-x64 plugin-bundle/sidecars/windows-x64 plugin-bundle/sidecars/macos-arm64
+          cp packages/gse-engine/target/x86_64-unknown-linux-musl/release/gse-engine plugin-bundle/sidecars/linux-x64/gse-engine
+          cp packages/gse-engine/target/x86_64-pc-windows-msvc/release/gse-engine.exe plugin-bundle/sidecars/windows-x64/gse-engine.exe
+          cp packages/gse-engine/target/aarch64-apple-darwin/release/gse-engine plugin-bundle/sidecars/macos-arm64/gse-engine
+
+      - name: Record sidecar digests in the bundle manifest
+        run: node scripts/sidecar-manifest.mjs
 
       - name: Assemble plugin bundle
         run: npm run bundle:build

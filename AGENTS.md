@@ -53,7 +53,20 @@ npm test
 npm run typecheck
 ```
 
----
+### Native sidecar (`gse-engine`) provisioning
+
+- The client addon invokes `gse-engine` through `ctx.system.run` under the
+  `system:sidecar` + `system:command` capabilities with
+  `client.commands: ["gse-engine"]`; probing (`gse-engine version`) fails over
+  to the TypeScript pipeline harmlessly.
+- Release builds bundle static binaries for `linux-x64` (musl), `windows-x64`,
+  and `macos-arm64` into `plugin-bundle/sidecars/` via `cargo-zigbuild`; their
+  SHA-256 digests are recorded under `client.sidecars` by
+  `scripts/sidecar-manifest.mjs` (release-build only — binaries are not
+  committed and `npm run validate` locally expects no `sidecars` section when
+  they are absent).
+- Drop Desktop stages the matching target into its per-plugin app-data bin dir
+  and appends it to bare-name resolution after `PATH` and well-known dirs.
 
 ## 4. Conventions
 

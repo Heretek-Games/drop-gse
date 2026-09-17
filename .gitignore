@@ -43,3 +43,6 @@ mitm_mcp_traffic.db
 review/
 --out/
 dist-package/
+
+# Sidecar binaries are built by the release workflow
+plugin-bundle/sidecars/
