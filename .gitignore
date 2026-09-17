@@ -41,3 +41,5 @@ Thumbs.db
 # Local tooling artifacts
 mitm_mcp_traffic.db
 review/
+--out/
+dist-package/
