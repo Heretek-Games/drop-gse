@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 import { MockClientPluginContext } from "@droposs/plugin-sdk";
 import {
   ACTIVE_ROOM_KEY,
+  CUSTOM_BROADCASTS_FILE,
   PORTABLE_SAVE_CONFIG_FILE,
   PORTABLE_SAVE_STAGED_KEY,
   STEAM_APPID_FILE,
+  STEAM_SETTINGS_APPID_FILE,
+  STEAM_SETTINGS_BROADCASTS_FILE,
   STEAM_SETTINGS_INI,
+  STEAM_SETTINGS_INTERFACES_FILE,
+  STEAM_SETTINGS_MAIN_INI,
   recoverInterruptedSession,
   type ActiveRoom,
 } from "../src/index.js";
@@ -33,7 +38,12 @@ test("recovers an interrupted session by restoring backups and clearing staged f
   await ctx.gameFs.backupFile("game-1", "steam_api64.dll");
   await ctx.gameFs.writeFile("game-1", "steam_api64.dll", "emulator");
   await ctx.gameFs.writeFile("game-1", STEAM_APPID_FILE, "123");
+  await ctx.gameFs.writeFile("game-1", CUSTOM_BROADCASTS_FILE, "10.0.0.2");
   await ctx.gameFs.writeFile("game-1", STEAM_SETTINGS_INI, "[Settings]");
+  await ctx.gameFs.writeFile("game-1", STEAM_SETTINGS_MAIN_INI, "[main::connectivity]");
+  await ctx.gameFs.writeFile("game-1", STEAM_SETTINGS_APPID_FILE, "123");
+  await ctx.gameFs.writeFile("game-1", STEAM_SETTINGS_BROADCASTS_FILE, "10.0.0.2:47584");
+  await ctx.gameFs.writeFile("game-1", STEAM_SETTINGS_INTERFACES_FILE, "SteamUser021");
   await ctx.gameFs.writeFile("game-1", PORTABLE_SAVE_CONFIG_FILE, "[user::saves]");
 
   const result = await recoverInterruptedSession(ctx);
@@ -44,7 +54,12 @@ test("recovers an interrupted session by restoring backups and clearing staged f
   const restored = new TextDecoder().decode(await ctx.gameFs.readFile("game-1", "steam_api64.dll"));
   assert.equal(restored, "original");
   assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_APPID_FILE), false);
+  assert.equal(await ctx.gameFs.fileExists("game-1", CUSTOM_BROADCASTS_FILE), false);
   assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_SETTINGS_INI), false);
+  assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_SETTINGS_MAIN_INI), false);
+  assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_SETTINGS_APPID_FILE), false);
+  assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_SETTINGS_BROADCASTS_FILE), false);
+  assert.equal(await ctx.gameFs.fileExists("game-1", STEAM_SETTINGS_INTERFACES_FILE), false);
   assert.equal(await ctx.gameFs.fileExists("game-1", PORTABLE_SAVE_CONFIG_FILE), false);
   assert.equal(await ctx.storage.get(ACTIVE_ROOM_KEY), null);
   assert.equal(await ctx.storage.get(PORTABLE_SAVE_STAGED_KEY), null);

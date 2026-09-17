@@ -22,9 +22,50 @@ export const ACTIVE_ROOM_KEY = "gse:activeRoom";
 
 /** Emulator configuration written into the game directory before launch. */
 export const STEAM_SETTINGS_DIR = "steam_settings";
+export const STEAM_SETTINGS_MAIN_INI = `${STEAM_SETTINGS_DIR}/configs.main.ini`;
+export const STEAM_SETTINGS_APPID_FILE = `${STEAM_SETTINGS_DIR}/steam_appid.txt`;
+export const STEAM_SETTINGS_BROADCASTS_FILE = `${STEAM_SETTINGS_DIR}/custom_broadcasts.txt`;
+export const STEAM_SETTINGS_INTERFACES_FILE = `${STEAM_SETTINGS_DIR}/steam_interfaces.txt`;
 export const STEAM_SETTINGS_INI = `${STEAM_SETTINGS_DIR}/settings.ini`;
 export const STEAM_APPID_FILE = "steam_appid.txt";
 export const CUSTOM_BROADCASTS_FILE = "custom_broadcasts.txt";
+
+/**
+ * Minimal `configs.main.ini` for Goldberg-family emulators.
+ * Enables connectivity and binds to UDP 47584.
+ */
+export function renderConfigsMainIni(flavor: "gbe_fork" | "gse_fork" = "gbe_fork"): string {
+  const listenerKey = flavor === "gse_fork" ? "listen_port" : "listener_port";
+  return [
+    "[main::connectivity]",
+    `${listenerKey}=47584`,
+    "disable_lan_only=0",
+    "disable_networking=0",
+    "",
+  ].join("\n");
+}
+
+/**
+ * Format custom broadcasts for Goldberg: one peer per line, with default port 47584.
+ */
+export function renderCustomBroadcasts(peers: string[]): string {
+  if (peers.length === 0) {
+    return "127.0.0.1:47584\n";
+  }
+  return peers.map((peer) => (peer.includes(":") ? peer : `${peer}:47584`)).join("\n") + "\n";
+}
+
+const INTERFACE_PATTERN = /Steam[A-Z][A-Za-z0-9_]*[0-9]{3}/g;
+
+/**
+ * Scans binary bytes for Steam interface identifiers (e.g. SteamUser021).
+ */
+export function extractInterfacesFromBytes(bytes: Uint8Array): string[] {
+  const text = new TextDecoder("latin1").decode(bytes);
+  const matches = text.match(INTERFACE_PATTERN);
+  if (!matches) return [];
+  return Array.from(new Set(matches)).sort();
+}
 
 /** Achievement definitions and portable save location written by the emulator. */
 export const ACHIEVEMENTS_DEFINITIONS_FILE = `${STEAM_SETTINGS_DIR}/achievements.json`;
@@ -109,9 +150,10 @@ export interface ActiveRoom {
   appId?: number;
   peers: string[];
   expiresAt: number;
+  isHost?: boolean;
 }
 
-function toActiveRoom(room: MemberRoom): ActiveRoom {
+function toActiveRoom(room: MemberRoom, isHost?: boolean): ActiveRoom {
   const peers = (room.members ?? [])
     .map((member) => member.meshAddress)
     .filter((address): address is string => Boolean(address));
@@ -122,6 +164,7 @@ function toActiveRoom(room: MemberRoom): ActiveRoom {
     appId: room.appId,
     peers,
     expiresAt: room.expiresAt,
+    isHost,
   };
 }
 
@@ -195,8 +238,24 @@ export async function recoverInterruptedSession(
       // Already gone.
     }
   }
-  for (const file of [STEAM_APPID_FILE, CUSTOM_BROADCASTS_FILE, STEAM_SETTINGS_INI]) {
+  for (const file of [
+    STEAM_SETTINGS_MAIN_INI,
+    STEAM_SETTINGS_APPID_FILE,
+    STEAM_SETTINGS_BROADCASTS_FILE,
+    STEAM_SETTINGS_INTERFACES_FILE,
+    STEAM_SETTINGS_INI,
+    STEAM_APPID_FILE,
+    CUSTOM_BROADCASTS_FILE,
+  ]) {
     await ctx.gameFs.deleteFile(room.gameId, file).catch(() => {});
+  }
+
+  if (room.roomId) {
+    try {
+      await ctx.serverRequest("DELETE", `/rooms/${encodeURIComponent(room.roomId)}`);
+    } catch {
+      // Best-effort during crash recovery.
+    }
   }
 
   await ctx.storage.delete(PORTABLE_SAVE_STAGED_KEY).catch(() => {});
@@ -236,6 +295,31 @@ export class DropGseClientPlugin implements ClientPlugin {
     ],
   };
 
+  private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+
+  teardown(): void {
+    this.stopHeartbeat();
+  }
+
+  private startHeartbeat(ctx: ClientPluginContext, roomId: string): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      void ctx
+        .serverRequest("POST", `/rooms/${encodeURIComponent(roomId)}/heartbeat`)
+        .catch((err: unknown) => {
+          ctx.logger.debug(`GSE heartbeat failed: ${String(err)}`);
+        });
+    }, 15_000);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+  }
+
   async init(ctx: ClientPluginContext): Promise<void> {
     await recoverInterruptedSession(ctx).catch((err: unknown) => {
       ctx.logger.warn(`GSE crash recovery failed: ${String(err)}`);
@@ -269,9 +353,8 @@ export class DropGseClientPlugin implements ClientPlugin {
   }
 
   /**
-   * Offer a room-join action for every joinable room of this game. When no room
-   * exists the action list is empty; the core library UI still advertises that
-   * multiplayer requires the extension.
+   * Offer room actions for this game: always offer "Host GSE Multiplayer Room"
+   * plus join actions for each active room found.
    */
   private async playActions(ctx: ClientPluginContext, gameId: string): Promise<PlayAction[]> {
     let rooms: DiscoverableRoom[] = [];
@@ -286,12 +369,50 @@ export class DropGseClientPlugin implements ClientPlugin {
       return [];
     }
 
-    return rooms.map((room) => ({
-      id: `gse-join-${room.id}`,
-      name: `Join GSE room (${room.memberCount} player${room.memberCount === 1 ? "" : "s"})`,
-      icon: "heroicons:user-group",
-      execute: (launch) => this.joinRoom(ctx, room.id, launch),
-    }));
+    const actions: PlayAction[] = [
+      {
+        id: `gse-host-${gameId}`,
+        name: "Host GSE Multiplayer Room",
+        icon: "heroicons:plus-circle",
+        execute: (launch) => this.hostRoom(ctx, launch),
+      },
+    ];
+
+    for (const room of rooms) {
+      actions.push({
+        id: `gse-join-${room.id}`,
+        name: `Join GSE room (${room.memberCount} player${room.memberCount === 1 ? "" : "s"})`,
+        icon: "heroicons:user-group",
+        execute: (launch) => this.joinRoom(ctx, room.id, launch),
+      });
+    }
+
+    return actions;
+  }
+
+  /** Host a new room for this game and persist the resulting room state. */
+  private async hostRoom(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
+    const versionId =
+      typeof launch.metadata?.versionId === "string" && launch.metadata.versionId.length > 0
+        ? launch.metadata.versionId
+        : "1.0.0";
+    const appId =
+      typeof launch.metadata?.appId === "number"
+        ? launch.metadata.appId
+        : Number.isInteger(Number(launch.gameId)) && Number(launch.gameId) > 0
+          ? Number(launch.gameId)
+          : undefined;
+
+    const res = await ctx.serverRequest<{ room: MemberRoom }>("POST", "/rooms", {
+      gameId: launch.gameId,
+      versionId,
+      appId,
+    });
+    if (!res?.room) {
+      throw new Error(`Failed to create GSE room for ${launch.gameId}`);
+    }
+    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room, true));
+    ctx.logger.info(`Hosted GSE room ${res.room.id} for ${launch.gameId}`);
   }
 
   /** Join a room and persist the resulting peer list for the launch pipeline. */
@@ -307,7 +428,7 @@ export class DropGseClientPlugin implements ClientPlugin {
     if (!res?.room) {
       throw new Error(`GSE room ${roomId} did not return room state`);
     }
-    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room));
+    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room, false));
     ctx.logger.info(`Joined GSE room ${roomId}`);
   }
 
@@ -374,20 +495,47 @@ export class DropGseClientPlugin implements ClientPlugin {
   }
 
   /**
-   * Back up the original Steam binaries and stage emulator configuration for
-   * the active room. Everything is confined to the game directory by the host.
+   * Back up original Steam binaries, harvest interface names, and stage emulator
+   * configuration for the active room.
    */
   private async stage(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
     const room = await this.activeRoom(ctx, launch.gameId);
     if (!room) return;
 
+    // Harvest interface names from pre-patch binaries before modifying them
+    const interfaces: string[] = [];
     for (const binary of STEAM_BINARIES) {
       if (await ctx.gameFs.fileExists(launch.gameId, binary)) {
+        try {
+          const bytes = await ctx.gameFs.readFile(launch.gameId, binary);
+          interfaces.push(...extractInterfacesFromBytes(bytes));
+        } catch {
+          // Non-critical: continue
+        }
         await ctx.gameFs.backupFile(launch.gameId, binary);
       }
     }
 
-    await ctx.gameFs.writeFile(launch.gameId, STEAM_APPID_FILE, `${room.appId ?? ""}\n`);
+    const uniqueInterfaces = Array.from(new Set(interfaces)).sort();
+    if (uniqueInterfaces.length > 0) {
+      await ctx.gameFs.writeFile(
+        launch.gameId,
+        STEAM_SETTINGS_INTERFACES_FILE,
+        uniqueInterfaces.join("\n") + "\n",
+      );
+    }
+
+    const broadcasts = renderCustomBroadcasts(room.peers);
+    const mainIni = renderConfigsMainIni();
+    const appidContent = `${room.appId ?? ""}\n`;
+
+    // Write standard steam_settings/ tree
+    await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_MAIN_INI, mainIni);
+    await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_APPID_FILE, appidContent);
+    await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_BROADCASTS_FILE, broadcasts);
+
+    // Also write root & legacy files for maximum compatibility
+    await ctx.gameFs.writeFile(launch.gameId, STEAM_APPID_FILE, appidContent);
     await ctx.gameFs.writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${room.peers.join("\n")}\n`);
     await ctx.gameFs.writeFile(
       launch.gameId,
@@ -400,7 +548,9 @@ export class DropGseClientPlugin implements ClientPlugin {
         "",
       ].join("\n"),
     );
+
     await this.stageAchievementSaves(ctx, launch);
+    this.startHeartbeat(ctx, room.roomId);
     ctx.logger.info(`Staged GSE config for room ${room.roomId}`);
   }
 
@@ -424,8 +574,9 @@ export class DropGseClientPlugin implements ClientPlugin {
     await ctx.storage.set(PORTABLE_SAVE_STAGED_KEY, true);
   }
 
-  /** Restore backed-up binaries, remove staged config, then report unlocks. */
+  /** Restore backed-up binaries, remove staged config, leave room, then report unlocks. */
   private async restore(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
+    this.stopHeartbeat();
     const room = await this.activeRoom(ctx, launch.gameId);
 
     for (const binary of STEAM_BINARIES) {
@@ -439,12 +590,26 @@ export class DropGseClientPlugin implements ClientPlugin {
       await ctx.storage.delete(PORTABLE_SAVE_STAGED_KEY).catch(() => {});
     }
 
-    for (const file of [STEAM_APPID_FILE, CUSTOM_BROADCASTS_FILE, STEAM_SETTINGS_INI]) {
+    for (const file of [
+      STEAM_SETTINGS_MAIN_INI,
+      STEAM_SETTINGS_APPID_FILE,
+      STEAM_SETTINGS_BROADCASTS_FILE,
+      STEAM_SETTINGS_INTERFACES_FILE,
+      STEAM_SETTINGS_INI,
+      STEAM_APPID_FILE,
+      CUSTOM_BROADCASTS_FILE,
+    ]) {
       await ctx.gameFs.deleteFile(launch.gameId, file).catch(() => {});
     }
     await ctx.storage.delete(ACTIVE_ROOM_KEY).catch(() => {});
 
     if (room) {
+      try {
+        await ctx.serverRequest("DELETE", `/rooms/${encodeURIComponent(room.roomId)}`);
+      } catch {
+        // Room may already be closed
+      }
+
       await this.syncAchievements(ctx, launch, room.appId).catch((err: unknown) => {
         ctx.logger.warn(`GSE achievement sync failed: ${String(err)}`);
       });

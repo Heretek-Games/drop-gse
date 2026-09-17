@@ -10,7 +10,11 @@ import {
   DropGseClientPlugin,
   PORTABLE_SAVE_CONFIG_FILE,
   STEAM_APPID_FILE,
+  STEAM_SETTINGS_APPID_FILE,
+  STEAM_SETTINGS_BROADCASTS_FILE,
   STEAM_SETTINGS_INI,
+  STEAM_SETTINGS_INTERFACES_FILE,
+  STEAM_SETTINGS_MAIN_INI,
   type ActiveRoom,
   type MemberRoom,
 } from "../src/index.js";
@@ -80,11 +84,15 @@ test("play actions are discovered and joining persists the active room", async (
   });
 
   const actions = await ctx.resolvePlayActions("42");
-  assert.equal(actions.length, 1);
-  assert.equal(actions[0]!.id, "gse-join-r1");
-  assert.match(actions[0]!.name, /Join GSE room/);
+  assert.equal(actions.length, 2);
+  const hostAction = actions.find((a) => a.id === "gse-host-42");
+  const joinAction = actions.find((a) => a.id === "gse-join-r1");
+  assert.ok(hostAction);
+  assert.ok(joinAction);
+  assert.match(hostAction.name, /Host GSE Multiplayer Room/);
+  assert.match(joinAction.name, /Join GSE room/);
 
-  await actions[0]!.execute(LAUNCH);
+  await joinAction.execute(LAUNCH);
 
   const calls = ctx.serverRequestLog.calls.map((c) => `${c.method} ${c.path}`);
   assert.deepEqual(calls, ["GET /rooms?gameId=42", "POST /rooms/r1/join"]);
@@ -92,6 +100,36 @@ test("play actions are discovered and joining persists the active room", async (
   const stored = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
   assert.equal(stored?.roomId, "r1");
   assert.deepEqual(stored?.peers, ["10.242.1.20", "10.242.1.21"]);
+});
+
+test("host action creates a room and persists the active room", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+
+  ctx.serverRequestLog.setResponse("GET", "/rooms?gameId=42", {
+    rooms: [],
+  });
+  ctx.serverRequestLog.setResponse("POST", "/rooms", {
+    room: makeRoom({
+      id: "r-new",
+      members: [{ userId: "u1", meshAddress: "10.242.1.50", joinedAt: 1 }],
+    }),
+  });
+
+  const actions = await ctx.resolvePlayActions("42");
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0]!.id, "gse-host-42");
+  assert.match(actions[0]!.name, /Host GSE Multiplayer Room/);
+
+  await actions[0]!.execute(LAUNCH);
+
+  const calls = ctx.serverRequestLog.calls.map((c) => `${c.method} ${c.path}`);
+  assert.deepEqual(calls, ["GET /rooms?gameId=42", "POST /rooms"]);
+
+  const stored = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
+  assert.equal(stored?.roomId, "r-new");
+  assert.equal(stored?.isHost, true);
+  assert.deepEqual(stored?.peers, ["10.242.1.50"]);
 });
 
 test("anti-cheat detection aborts the launch pipeline", async () => {
@@ -146,6 +184,9 @@ test("stage backs up binaries and writes confined emulator config", async () => 
   await hook(ctx, "pre-launch:stage").execute(LAUNCH);
 
   assert.ok(ctx.gameFs.files.has("42:steam_api64.dll.drop-backup"));
+  assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_MAIN_INI}`));
+  assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_APPID_FILE}`));
+  assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_BROADCASTS_FILE}`));
   assert.ok(ctx.gameFs.files.has(`42:${STEAM_APPID_FILE}`));
   assert.ok(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`));
   assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_INI}`));
@@ -154,6 +195,33 @@ test("stage backs up binaries and writes confined emulator config", async () => 
     ctx.gameFs.files.get(`42:${CUSTOM_BROADCASTS_FILE}`)!,
   );
   assert.equal(broadcasts.trim(), "10.242.1.20\n10.242.1.21");
+
+  const settingsBroadcasts = new TextDecoder().decode(
+    ctx.gameFs.files.get(`42:${STEAM_SETTINGS_BROADCASTS_FILE}`)!,
+  );
+  assert.equal(settingsBroadcasts.trim(), "10.242.1.20:47584\n10.242.1.21:47584");
+
+  const mainIni = new TextDecoder().decode(ctx.gameFs.files.get(`42:${STEAM_SETTINGS_MAIN_INI}`)!);
+  assert.match(mainIni, /listener_port=47584/);
+});
+
+test("stage extracts interface identifiers from binary bytes", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+
+  const binaryWithInterfaces = new TextEncoder().encode(
+    "MZ\x00SteamUser021\x00SteamNetworkingSockets012\x00SteamUser021\x00extra",
+  );
+  ctx.gameFs.files.set("42:steam_api64.dll", binaryWithInterfaces);
+
+  await hook(ctx, "pre-launch:stage").execute(LAUNCH);
+
+  assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_INTERFACES_FILE}`));
+  const interfaces = new TextDecoder().decode(
+    ctx.gameFs.files.get(`42:${STEAM_SETTINGS_INTERFACES_FILE}`)!,
+  );
+  assert.equal(interfaces, "SteamNetworkingSockets012\nSteamUser021\n");
 });
 
 test("post-exit restore returns the original binary and removes config", async () => {
@@ -173,9 +241,17 @@ test("post-exit restore returns the original binary and removes config", async (
     new TextDecoder().decode(ctx.gameFs.files.get("42:steam_api64.dll")),
     "original-steam-api",
   );
+  assert.equal(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_MAIN_INI}`), false);
+  assert.equal(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_APPID_FILE}`), false);
+  assert.equal(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_BROADCASTS_FILE}`), false);
   assert.equal(ctx.gameFs.files.has(`42:${STEAM_APPID_FILE}`), false);
   assert.equal(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`), false);
   assert.equal(await ctx.storage.get(ACTIVE_ROOM_KEY), null);
+
+  // Verifies room teardown call was dispatched to server
+  assert.ok(
+    ctx.serverRequestLog.calls.some((c) => c.method === "DELETE" && c.path === "/rooms/r1"),
+  );
 });
 
 const DEFINITIONS = JSON.stringify([{ name: "ACH_A" }, { name: "ACH_B" }]);
