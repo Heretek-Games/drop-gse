@@ -16,6 +16,9 @@ import type {
 } from "@droposs/plugin-sdk";
 
 import { planAchievementSync, readLocalSavePath } from "./achievements.js";
+import { GseSidecar } from "./sidecar.js";
+
+export * from "./sidecar.js";
 
 /** Client-storage key holding the room this client is currently attached to. */
 export const ACTIVE_ROOM_KEY = "gse:activeRoom";
@@ -151,9 +154,10 @@ export interface ActiveRoom {
   peers: string[];
   expiresAt: number;
   isHost?: boolean;
+  gameDir?: string;
 }
 
-function toActiveRoom(room: MemberRoom, isHost?: boolean): ActiveRoom {
+function toActiveRoom(room: MemberRoom, isHost?: boolean, gameDir?: string): ActiveRoom {
   const peers = (room.members ?? [])
     .map((member) => member.meshAddress)
     .filter((address): address is string => Boolean(address));
@@ -165,6 +169,7 @@ function toActiveRoom(room: MemberRoom, isHost?: boolean): ActiveRoom {
     peers,
     expiresAt: room.expiresAt,
     isHost,
+    gameDir,
   };
 }
 
@@ -209,6 +214,7 @@ export interface GseRecoveryResult {
  */
 export async function recoverInterruptedSession(
   ctx: ClientPluginContext,
+  sidecar?: GseSidecar,
 ): Promise<GseRecoveryResult> {
   const room = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
   if (!room?.gameId) {
@@ -218,11 +224,79 @@ export async function recoverInterruptedSession(
   ctx.logger.warn(`Recovering interrupted GSE session for ${room.gameId}`);
 
   const restored: string[] = [];
+  const runner = sidecar ?? new GseSidecar(ctx.system);
+
+  if (room.gameDir && (await runner.isAvailable())) {
+    try {
+      const res = await runner.restore({ gameDir: room.gameDir });
+      restored.push(...res.restored);
+    } catch (err) {
+      ctx.logger.warn(`Sidecar crash recovery failed for ${room.gameDir}: ${String(err)}`);
+    }
+  }
+
+  // Restore engine-tracked targets recorded in .drop-gse-manifest.json
+  if (await ctx.gameFs.fileExists(room.gameId, ".drop-gse-manifest.json")) {
+    try {
+      const manifestBytes = await ctx.gameFs.readFile(room.gameId, ".drop-gse-manifest.json");
+      const manifestStr = new TextDecoder().decode(manifestBytes);
+      const manifest = JSON.parse(manifestStr) as { entries?: Record<string, string> };
+      if (manifest?.entries) {
+        for (const target of Object.keys(manifest.entries)) {
+          const origFile = `${target}.orig`;
+          if (await ctx.gameFs.fileExists(room.gameId, origFile)) {
+            const origBytes = await ctx.gameFs.readFile(room.gameId, origFile);
+            await ctx.gameFs.writeFile(room.gameId, target, origBytes);
+            await ctx.gameFs.deleteFile(room.gameId, origFile);
+            if (!restored.includes(target)) {
+              restored.push(target);
+            }
+          }
+        }
+      }
+      await ctx.gameFs.deleteFile(room.gameId, ".drop-gse-manifest.json");
+    } catch (err) {
+      ctx.logger.warn(`Failed to process engine manifest during recovery: ${String(err)}`);
+    }
+  }
+
+  // Restore any pre-existing user emulator configs that were backed up as .drop-gse-backup
+  for (const file of ["configs.main.ini", "steam_interfaces.txt"]) {
+    const backupFile = `${STEAM_SETTINGS_DIR}/${file}.drop-gse-backup`;
+    const targetFile = `${STEAM_SETTINGS_DIR}/${file}`;
+    if (await ctx.gameFs.fileExists(room.gameId, backupFile)) {
+      try {
+        const backupBytes = await ctx.gameFs.readFile(room.gameId, backupFile);
+        await ctx.gameFs.writeFile(room.gameId, targetFile, backupBytes);
+        await ctx.gameFs.deleteFile(room.gameId, backupFile);
+      } catch {
+        // Continue best-effort
+      }
+    }
+  }
+
+  // Restore any remaining *.orig binaries or host .drop-backup files for STEAM_BINARIES
   for (const binary of STEAM_BINARIES) {
+    const origFile = `${binary}.orig`;
+    if (await ctx.gameFs.fileExists(room.gameId, origFile)) {
+      try {
+        const origBytes = await ctx.gameFs.readFile(room.gameId, origFile);
+        await ctx.gameFs.writeFile(room.gameId, binary, origBytes);
+        await ctx.gameFs.deleteFile(room.gameId, origFile);
+        if (!restored.includes(binary)) {
+          restored.push(binary);
+        }
+      } catch {
+        // Continue best-effort
+      }
+    }
+
     if (await ctx.gameFs.fileExists(room.gameId, binary)) {
       try {
         await ctx.gameFs.restoreFile(room.gameId, binary);
-        restored.push(binary);
+        if (!restored.includes(binary)) {
+          restored.push(binary);
+        }
       } catch {
         // No backup exists (fresh emulator binary); nothing to restore.
       }
@@ -292,10 +366,20 @@ export class DropGseClientPlugin implements ClientPlugin {
       "game:scan",
       "client:storage",
       "client:ws",
+      "system:sidecar",
+      "system:command",
     ],
   };
 
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  private sidecar?: GseSidecar;
+
+  private getSidecar(ctx: ClientPluginContext): GseSidecar {
+    if (!this.sidecar) {
+      this.sidecar = new GseSidecar(ctx.system);
+    }
+    return this.sidecar;
+  }
 
   teardown(): void {
     this.stopHeartbeat();
@@ -321,7 +405,8 @@ export class DropGseClientPlugin implements ClientPlugin {
   }
 
   async init(ctx: ClientPluginContext): Promise<void> {
-    await recoverInterruptedSession(ctx).catch((err: unknown) => {
+    const sidecar = this.getSidecar(ctx);
+    await recoverInterruptedSession(ctx, sidecar).catch((err: unknown) => {
       ctx.logger.warn(`GSE crash recovery failed: ${String(err)}`);
     });
 
@@ -411,7 +496,7 @@ export class DropGseClientPlugin implements ClientPlugin {
     if (!res?.room) {
       throw new Error(`Failed to create GSE room for ${launch.gameId}`);
     }
-    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room, true));
+    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room, true, launch.gameDir));
     ctx.logger.info(`Hosted GSE room ${res.room.id} for ${launch.gameId}`);
   }
 
@@ -419,7 +504,7 @@ export class DropGseClientPlugin implements ClientPlugin {
   private async joinRoom(
     ctx: ClientPluginContext,
     roomId: string,
-    _launch: LaunchContext,
+    launch: LaunchContext,
   ): Promise<void> {
     const res = await ctx.serverRequest<{ room: MemberRoom }>(
       "POST",
@@ -428,7 +513,7 @@ export class DropGseClientPlugin implements ClientPlugin {
     if (!res?.room) {
       throw new Error(`GSE room ${roomId} did not return room state`);
     }
-    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room, false));
+    await ctx.storage.set(ACTIVE_ROOM_KEY, toActiveRoom(res.room, false, launch.gameDir));
     ctx.logger.info(`Joined GSE room ${roomId}`);
   }
 
@@ -446,17 +531,62 @@ export class DropGseClientPlugin implements ClientPlugin {
    * Fail-closed anti-cheat gate. Any detection aborts the launch so a modified
    * `steam_api` binary can never be presented to EasyAntiCheat/BattlEye.
    *
-   * Uses the generic `findFiles` host primitive when available and falls back
-   * to the legacy `checkAntiCheat` capability for older hosts. Fails closed if
-   * the host exposes neither.
+   * Queries the server compatibility registry for blocked AppIDs/GameIDs,
+   * probes the native `gse-engine` sidecar for directory scanning when available,
+   * and falls back to host scanner primitives (`findFiles`/`checkAntiCheat`).
    */
   private async validate(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
     const room = await this.activeRoom(ctx, launch.gameId);
     if (!room) return;
 
-    const detection = await this.detectAntiCheat(ctx, launch.gameId);
-    if (detection) {
-      throw new Error(`GSE multiplayer aborted for "${launch.gameTitle}": ${detection.detail}`);
+    // Check server compatibility registry
+    try {
+      const compat = await ctx.serverRequest<{
+        blockedAppIds?: number[];
+        blockedGameIds?: string[];
+      }>("GET", "/compat");
+      if (compat) {
+        if (compat.blockedGameIds?.includes(launch.gameId)) {
+          throw new Error(
+            `Game "${launch.gameTitle}" (${launch.gameId}) is known-incompatible with GSE multiplayer`,
+          );
+        }
+        if (room.appId !== undefined && compat.blockedAppIds?.includes(room.appId)) {
+          throw new Error(
+            `Steam AppID ${room.appId} is known-incompatible with GSE multiplayer (anti-cheat protected)`,
+          );
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes("known-incompatible")) {
+        throw err;
+      }
+      ctx.logger.debug(`GSE compat check skipped or unavailable: ${String(err)}`);
+    }
+
+    const sidecar = this.getSidecar(ctx);
+    if (await sidecar.isAvailable()) {
+      try {
+        const scan = await sidecar.scan(launch.gameDir);
+        if (scan.antiCheat) {
+          throw new Error(
+            `GSE multiplayer aborted for "${launch.gameTitle}": anti-cheat marker detected (${scan.antiCheat})`,
+          );
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("GSE multiplayer aborted")) {
+          throw err;
+        }
+        throw new Error(
+          `GSE multiplayer aborted for "${launch.gameTitle}": anti-cheat scan failed (${String(err)})`,
+          { cause: err },
+        );
+      }
+    } else {
+      const detection = await this.detectAntiCheat(ctx, launch.gameId);
+      if (detection) {
+        throw new Error(`GSE multiplayer aborted for "${launch.gameTitle}": ${detection.detail}`);
+      }
     }
   }
 
@@ -502,52 +632,90 @@ export class DropGseClientPlugin implements ClientPlugin {
     const room = await this.activeRoom(ctx, launch.gameId);
     if (!room) return;
 
-    // Harvest interface names from pre-patch binaries before modifying them
-    const interfaces: string[] = [];
-    for (const binary of STEAM_BINARIES) {
-      if (await ctx.gameFs.fileExists(launch.gameId, binary)) {
-        try {
-          const bytes = await ctx.gameFs.readFile(launch.gameId, binary);
-          interfaces.push(...extractInterfacesFromBytes(bytes));
-        } catch {
-          // Non-critical: continue
-        }
-        await ctx.gameFs.backupFile(launch.gameId, binary);
-      }
+    if (!room.gameDir) {
+      room.gameDir = launch.gameDir;
+      await ctx.storage.set(ACTIVE_ROOM_KEY, room);
     }
 
-    const uniqueInterfaces = Array.from(new Set(interfaces)).sort();
-    if (uniqueInterfaces.length > 0) {
+    const sidecar = this.getSidecar(ctx);
+    if (await sidecar.isAvailable()) {
+      await sidecar.patch({
+        gameDir: launch.gameDir,
+        appId: room.appId ?? 480,
+        peers: room.peers,
+      });
+
+      // Write root & legacy files for maximum compatibility
+      const appidContent = `${room.appId ?? ""}\n`;
+      await ctx.gameFs.writeFile(launch.gameId, STEAM_APPID_FILE, appidContent).catch(() => {});
+      await ctx.gameFs
+        .writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${room.peers.join("\n")}\n`)
+        .catch(() => {});
+      await ctx.gameFs
+        .writeFile(
+          launch.gameId,
+          STEAM_SETTINGS_INI,
+          [
+            "[Settings]",
+            `room_id=${room.roomId}`,
+            `version_id=${room.versionId}`,
+            `peer_count=${room.peers.length}`,
+            "",
+          ].join("\n"),
+        )
+        .catch(() => {});
+    } else {
+      // Harvest interface names from pre-patch binaries before modifying them
+      const interfaces: string[] = [];
+      for (const binary of STEAM_BINARIES) {
+        if (await ctx.gameFs.fileExists(launch.gameId, binary)) {
+          try {
+            const bytes = await ctx.gameFs.readFile(launch.gameId, binary);
+            interfaces.push(...extractInterfacesFromBytes(bytes));
+          } catch {
+            // Non-critical: continue
+          }
+          await ctx.gameFs.backupFile(launch.gameId, binary);
+        }
+      }
+
+      const uniqueInterfaces = Array.from(new Set(interfaces)).sort();
+      if (uniqueInterfaces.length > 0) {
+        await ctx.gameFs.writeFile(
+          launch.gameId,
+          STEAM_SETTINGS_INTERFACES_FILE,
+          uniqueInterfaces.join("\n") + "\n",
+        );
+      }
+
+      const broadcasts = renderCustomBroadcasts(room.peers);
+      const mainIni = renderConfigsMainIni();
+      const appidContent = `${room.appId ?? ""}\n`;
+
+      // Write standard steam_settings/ tree
+      await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_MAIN_INI, mainIni);
+      await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_APPID_FILE, appidContent);
+      await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_BROADCASTS_FILE, broadcasts);
+
+      // Also write root & legacy files for maximum compatibility
+      await ctx.gameFs.writeFile(launch.gameId, STEAM_APPID_FILE, appidContent);
       await ctx.gameFs.writeFile(
         launch.gameId,
-        STEAM_SETTINGS_INTERFACES_FILE,
-        uniqueInterfaces.join("\n") + "\n",
+        CUSTOM_BROADCASTS_FILE,
+        `${room.peers.join("\n")}\n`,
+      );
+      await ctx.gameFs.writeFile(
+        launch.gameId,
+        STEAM_SETTINGS_INI,
+        [
+          "[Settings]",
+          `room_id=${room.roomId}`,
+          `version_id=${room.versionId}`,
+          `peer_count=${room.peers.length}`,
+          "",
+        ].join("\n"),
       );
     }
-
-    const broadcasts = renderCustomBroadcasts(room.peers);
-    const mainIni = renderConfigsMainIni();
-    const appidContent = `${room.appId ?? ""}\n`;
-
-    // Write standard steam_settings/ tree
-    await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_MAIN_INI, mainIni);
-    await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_APPID_FILE, appidContent);
-    await ctx.gameFs.writeFile(launch.gameId, STEAM_SETTINGS_BROADCASTS_FILE, broadcasts);
-
-    // Also write root & legacy files for maximum compatibility
-    await ctx.gameFs.writeFile(launch.gameId, STEAM_APPID_FILE, appidContent);
-    await ctx.gameFs.writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${room.peers.join("\n")}\n`);
-    await ctx.gameFs.writeFile(
-      launch.gameId,
-      STEAM_SETTINGS_INI,
-      [
-        "[Settings]",
-        `room_id=${room.roomId}`,
-        `version_id=${room.versionId}`,
-        `peer_count=${room.peers.length}`,
-        "",
-      ].join("\n"),
-    );
 
     await this.stageAchievementSaves(ctx, launch);
     this.startHeartbeat(ctx, room.roomId);
@@ -579,10 +747,33 @@ export class DropGseClientPlugin implements ClientPlugin {
     this.stopHeartbeat();
     const room = await this.activeRoom(ctx, launch.gameId);
 
+    const sidecar = this.getSidecar(ctx);
+    if (await sidecar.isAvailable()) {
+      try {
+        await sidecar.restore({ gameDir: launch.gameDir });
+      } catch (err) {
+        ctx.logger.warn(`Sidecar restore failed: ${String(err)}`);
+      }
+    }
+
     for (const binary of STEAM_BINARIES) {
       if (await ctx.gameFs.fileExists(launch.gameId, binary)) {
         await ctx.gameFs.restoreFile(launch.gameId, binary).catch(() => {});
       }
+      const origFile = `${binary}.orig`;
+      if (await ctx.gameFs.fileExists(launch.gameId, origFile)) {
+        try {
+          const origBytes = await ctx.gameFs.readFile(launch.gameId, origFile);
+          await ctx.gameFs.writeFile(launch.gameId, binary, origBytes);
+          await ctx.gameFs.deleteFile(launch.gameId, origFile);
+        } catch {
+          // Best-effort
+        }
+      }
+    }
+
+    if (await ctx.gameFs.fileExists(launch.gameId, ".drop-gse-manifest.json")) {
+      await ctx.gameFs.deleteFile(launch.gameId, ".drop-gse-manifest.json").catch(() => {});
     }
 
     if (await ctx.storage.get<boolean>(PORTABLE_SAVE_STAGED_KEY)) {

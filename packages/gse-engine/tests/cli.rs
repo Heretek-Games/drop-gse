@@ -94,3 +94,61 @@ fn patch_then_restore_roundtrip_through_the_cli() {
         b"original-valve"
     );
 }
+
+#[test]
+fn version_reports_engine_and_package_version() {
+    let output = Command::new(bin()).arg("version").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["engine"], "gse-engine");
+    assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
+fn patch_with_optional_emulator_dir_and_restore_via_manifest() {
+    let game = tempfile::tempdir().unwrap();
+    fs::create_dir_all(game.path().join("bin/x64")).unwrap();
+    fs::write(
+        game.path().join("bin/x64/steam_api64.dll"),
+        b"valve-x64-binary",
+    )
+    .unwrap();
+
+    // Patch without specifying --emulator-dir (defaults to game_dir, backs up and writes config)
+    let patch = Command::new(bin())
+        .args(["patch", "--game-dir"])
+        .arg(game.path())
+        .args(["--app-id", "9999", "--peers", "10.0.0.5"])
+        .output()
+        .unwrap();
+    assert!(
+        patch.status.success(),
+        "{}",
+        String::from_utf8_lossy(&patch.stderr)
+    );
+    assert!(game.path().join("bin/x64/steam_api64.dll.orig").is_file());
+    assert!(game.path().join(".drop-gse-manifest.json").is_file());
+
+    // Restore without --targets flag should find targets from tracked manifest
+    let restore_output = Command::new(bin())
+        .args(["restore", "--game-dir"])
+        .arg(game.path())
+        .output()
+        .unwrap();
+    assert!(
+        restore_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restore_output.stderr)
+    );
+
+    let json: serde_json::Value = serde_json::from_slice(&restore_output.stdout).unwrap();
+    let restored = json["restored"].as_array().unwrap();
+    assert!(restored.iter().any(|v| v == "bin/x64/steam_api64.dll"));
+    assert!(!game.path().join("bin/x64/steam_api64.dll.orig").exists());
+    assert!(!game.path().join(".drop-gse-manifest.json").exists());
+}

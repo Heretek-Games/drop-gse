@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MockPluginContext, MockPluginStorage } from "@droposs/plugin-sdk";
-import { CompatRegistry } from "../src/compat.js";
+import {
+  CompatRegistry,
+  compatFromEnv,
+  DEFAULT_BLOCKED_APP_IDS,
+  DEFAULT_BLOCKED_GAME_IDS,
+} from "../src/compat.js";
 import { DropGseServerPlugin } from "../src/index.js";
 import { StorageRoomPersistence } from "../src/persistence.js";
 import { RoomStore } from "../src/room-store.js";
@@ -293,4 +298,40 @@ test("toDiscoverable omits mesh until the provider reports it", async () => {
   const { store } = setup();
   const room = await createRoom(store);
   assert.equal(toDiscoverable(room).mesh, undefined);
+});
+
+test("compatFromEnv provides default anti-cheat entries and merges env overrides", () => {
+  const defaults = compatFromEnv({});
+  assert.deepEqual(
+    defaults.blockedAppIds,
+    [...DEFAULT_BLOCKED_APP_IDS].sort((a, b) => a - b),
+  );
+  assert.deepEqual(defaults.blockedGameIds, [...DEFAULT_BLOCKED_GAME_IDS].sort());
+
+  const merged = compatFromEnv({
+    GSE_BLOCKED_APP_IDS: "999, 1000, 730",
+    GSE_BLOCKED_GAME_IDS: "custom-anticheat, valorant",
+  });
+  assert.ok(merged.blockedAppIds.includes(999));
+  assert.ok(merged.blockedAppIds.includes(1000));
+  assert.ok(merged.blockedAppIds.includes(730));
+  assert.ok(merged.blockedGameIds.includes("custom-anticheat"));
+  assert.ok(merged.blockedGameIds.includes("valorant"));
+});
+
+test("plugin exposes /compat route containing compatibility registry", async () => {
+  const { persistence } = setup();
+  const plugin = new DropGseServerPlugin(persistence, new FakeSink());
+  const ctx = new MockPluginContext("drop-gse");
+  plugin.init(ctx);
+
+  const compatRoute = ctx.routes.get("GET /compat");
+  assert.ok(compatRoute);
+  const info = (await compatRoute!.handler({}, { params: {}, query: {} })) as {
+    blockedAppIds: number[];
+    blockedGameIds: string[];
+  };
+  assert.ok(info.blockedAppIds.includes(730));
+  assert.ok(info.blockedGameIds.includes("valorant"));
+  plugin.teardown();
 });
