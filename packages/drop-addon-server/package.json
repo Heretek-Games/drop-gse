@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@heretek-games/zerotier-mesh": "^0.3.0",
-    "@droposs/plugin-sdk": "^0.6.1"
+    "@droposs/plugin-sdk": "^0.6.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

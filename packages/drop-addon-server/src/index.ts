@@ -1,4 +1,4 @@
-import { createError, readBody } from "h3";
+import { createError, readBody, type H3Event } from "h3";
 import type { PluginContext, PluginMetadata, ServerPlugin } from "@droposs/plugin-sdk";
 import { isPublicMeshInfo } from "@heretek-games/zerotier-mesh";
 import { CompatRegistry, compatFromEnv } from "./compat.js";
@@ -233,7 +233,7 @@ export class DropGseServerPlugin implements ServerPlugin {
         versionId?: string;
         appId?: number;
         emulator?: EmulatorBinding;
-      }>(event);
+      }>(event as H3Event);
 
       if (
         typeof body?.gameId !== "string" ||
