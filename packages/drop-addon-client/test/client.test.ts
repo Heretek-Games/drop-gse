@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MockClientPluginContext, MockSystemCommand, type LaunchHook } from "@droposs/plugin-sdk";
+import { MockClientPluginContext, type LaunchHook } from "@droposs/plugin-sdk";
 import {
   ACTIVE_ROOM_KEY,
   ACHIEVEMENTS_DEFINITIONS_FILE,
