@@ -1,6 +1,6 @@
 {
   "name": "@drop-gse/addon-client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Drop client addon: launch lifecycle hooks, VPN validation & UI for drop-gse",
   "license": "GPL-3.0-or-later",

@@ -1,6 +1,6 @@
 {
   "name": "@drop-gse/addon-server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Drop server plugin: room orchestration & mesh coordination for drop-gse",
   "license": "GPL-3.0-or-later",

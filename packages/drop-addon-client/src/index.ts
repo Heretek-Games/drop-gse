@@ -358,7 +358,7 @@ export class DropGseClientPlugin implements ClientPlugin {
   metadata: PluginMetadata = {
     id: "drop-gse",
     name: "Drop GSE Multiplayer",
-    version: "0.3.0",
+    version: "0.3.1",
     description:
       "Peer-to-peer multiplayer rooms over virtual mesh networks using the Goldberg Steam emulator",
     author: "Heretek Games",
