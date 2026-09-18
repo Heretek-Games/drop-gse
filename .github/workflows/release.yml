@@ -52,7 +52,7 @@ jobs:
           cp "packages/gse-engine/target/${{ matrix.target }}/release/${{ matrix.bin }}" "sidecars/${{ matrix.dir }}/${{ matrix.bin }}"
 
       - name: Upload sidecar artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540478e122f210621e2a26c2 # actions/upload-artifact@v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # actions/upload-artifact@v7.0.1
         with:
           name: sidecar-${{ matrix.dir }}
           path: sidecars/${{ matrix.dir }}
@@ -82,7 +82,7 @@ jobs:
         run: npm test
 
       - name: Download sidecar binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974cac6a6715fc9e7a1f442 # actions/download-artifact@v4.3.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # actions/download-artifact@v7.0.0
         with:
           pattern: sidecar-*
           path: plugin-bundle/sidecars
