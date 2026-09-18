@@ -89,9 +89,7 @@ fn cmd_scan(args: &[String]) -> Result<serde_json::Value, String> {
 
 fn cmd_patch(args: &[String]) -> Result<serde_json::Value, String> {
     let game_dir = PathBuf::from(flag(args, "--game-dir").ok_or("--game-dir is required")?);
-    let emulator_dir = flag(args, "--emulator-dir")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| game_dir.clone());
+    let emulator_dir = flag(args, "--emulator-dir").map(PathBuf::from);
     let app_id: u32 = flag(args, "--app-id")
         .ok_or("--app-id is required")?
         .parse()
@@ -119,7 +117,7 @@ fn cmd_patch(args: &[String]) -> Result<serde_json::Value, String> {
         targets,
         broadcast_peers: list_flag(args, "--peers"),
     };
-    let report = apply_plan(&plan, &game_dir, &emulator_dir).map_err(|error| error.to_string())?;
+    let report = apply_plan(&plan, &game_dir, emulator_dir.as_deref()).map_err(|error| error.to_string())?;
 
     Ok(serde_json::json!({
         "patched": report.patched,

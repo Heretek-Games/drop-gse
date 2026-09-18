@@ -23,7 +23,7 @@ pub struct PatchReport {
 pub fn apply_plan(
     plan: &PatchPlan,
     game_dir: &Path,
-    emulator_dir: &Path,
+    emulator_dir: Option<&Path>,
 ) -> Result<PatchReport, EngineError> {
     if let Some(marker) = anticheat::detect(game_dir)? {
         return Err(EngineError::AntiCheatDetected(marker));
@@ -33,18 +33,34 @@ pub fn apply_plan(
     let outcome = dll::backup_originals(game_dir, &targets)?;
 
     let mut report = PatchReport::default();
-    for name in &plan.targets {
-        // The emulator payload is flat (one file per target name); the
-        // destination preserves the target's relative path in the game dir.
-        let Some(file_name) = Path::new(name).file_name() else {
-            continue;
-        };
-        let src = emulator_dir.join(file_name);
-        if !src.is_file() {
-            continue;
+    if let Some(emu_dir) = emulator_dir {
+        let is_self_or_nested = emu_dir == game_dir
+            || game_dir
+                .canonicalize()
+                .ok()
+                .and_then(|c_game| {
+                    emu_dir
+                        .canonicalize()
+                        .ok()
+                        .map(|c_emu| c_emu.starts_with(c_game))
+                })
+                .unwrap_or(false);
+
+        if !is_self_or_nested {
+            for name in &plan.targets {
+                // The emulator payload is flat (one file per target name); the
+                // destination preserves the target's relative path in the game dir.
+                let Some(file_name) = Path::new(name).file_name() else {
+                    continue;
+                };
+                let src = emu_dir.join(file_name);
+                if !src.is_file() {
+                    continue;
+                }
+                path_guard::copy_to(game_dir, &src, name)?;
+                report.patched.push(name.clone());
+            }
         }
-        path_guard::copy_to(game_dir, &src, name)?;
-        report.patched.push(name.clone());
     }
 
     // Harvest interface names from the pre-patch (original) binaries.
@@ -115,7 +131,7 @@ mod tests {
             broadcast_peers: vec!["10.242.0.5".to_string()],
         };
 
-        let report = apply_plan(&plan, game.path(), emulator.path()).unwrap();
+        let report = apply_plan(&plan, game.path(), Some(emulator.path())).unwrap();
         assert_eq!(report.patched, vec!["steam_api64.dll".to_string()]);
         assert_eq!(report.backed_up, vec!["steam_api64.dll".to_string()]);
         assert!(game.path().join("steam_api64.dll.orig").exists());
@@ -150,7 +166,7 @@ mod tests {
         };
 
         assert!(matches!(
-            apply_plan(&plan, game.path(), emulator.path()),
+            apply_plan(&plan, game.path(), Some(emulator.path())),
             Err(EngineError::AntiCheatDetected(_))
         ));
         // Fail-closed: the live binary is untouched and no backup was written.
@@ -159,5 +175,47 @@ mod tests {
             b"original-valve"
         );
         assert!(!game.path().join("steam_api64.dll.orig").exists());
+    }
+
+    #[test]
+    fn refuses_to_cross_copy_when_emulator_dir_is_game_dir_or_omitted() {
+        let game = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(game.path().join("bin/x64")).unwrap();
+        std::fs::write(game.path().join("steam_api64.dll"), b"ROOT-ORIGINAL").unwrap();
+        std::fs::write(
+            game.path().join("bin/x64/steam_api64.dll"),
+            b"NESTED-ORIGINAL",
+        )
+        .unwrap();
+
+        let plan = PatchPlan {
+            flavor: EmulatorFlavor::GbeFork,
+            app_id: 480,
+            targets: vec![
+                "steam_api64.dll".to_string(),
+                "bin/x64/steam_api64.dll".to_string(),
+            ],
+            broadcast_peers: vec![],
+        };
+
+        // Case 1: None (omitted emulator dir)
+        let report_none = apply_plan(&plan, game.path(), None).unwrap();
+        assert!(report_none.patched.is_empty());
+        assert_eq!(
+            std::fs::read(game.path().join("bin/x64/steam_api64.dll")).unwrap(),
+            b"NESTED-ORIGINAL"
+        );
+
+        // Case 2: emulator_dir == game_dir
+        let report_self = apply_plan(&plan, game.path(), Some(game.path())).unwrap();
+        assert!(report_self.patched.is_empty());
+        assert_eq!(
+            std::fs::read(game.path().join("bin/x64/steam_api64.dll")).unwrap(),
+            b"NESTED-ORIGINAL"
+        );
+        assert_eq!(
+            std::fs::read(game.path().join("steam_api64.dll")).unwrap(),
+            b"ROOT-ORIGINAL"
+        );
     }
 }
