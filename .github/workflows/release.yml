@@ -13,9 +13,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-sidecars:
+    name: Build gse-engine sidecars (${{ matrix.dir }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            dir: linux-x64
+            bin: gse-engine
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            dir: windows-x64
+            bin: gse-engine.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            dir: macos-arm64
+            bin: gse-engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout@v7.0.1
+
+      - name: Build gse-engine sidecar binary
+        uses: houseabsolute/actions-rust-cross@9a1618ffb70e8374ab5f48fcccea3ebeacf57971 # v1.0.5
+        with:
+          toolchain: nightly
+          target: ${{ matrix.target }}
+          args: "--locked --release"
+          working-directory: packages/gse-engine
+          strip: true
+
+      - name: Stage sidecar binary
+        shell: bash
+        run: |
+          mkdir -p "sidecars/${{ matrix.dir }}"
+          cp "packages/gse-engine/target/${{ matrix.target }}/release/${{ matrix.bin }}" "sidecars/${{ matrix.dir }}/${{ matrix.bin }}"
+
+      - name: Upload sidecar artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540478e122f210621e2a26c2 # actions/upload-artifact@v4.6.2
+        with:
+          name: sidecar-${{ matrix.dir }}
+          path: sidecars/${{ matrix.dir }}
+          if-no-files-found: error
+
   release:
     name: Build, validate, and publish .dropplugin
     runs-on: ubuntu-latest
+    needs: build-sidecars
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout@v7.0.1
@@ -35,39 +81,12 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build gse-engine sidecar binaries (linux-x64 musl)
-        uses: houseabsolute/actions-rust-cross@9a1618ffb70e8374ab5f48fcccea3ebeacf57971 # v1.0.5
+      - name: Download sidecar binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974cac6a6715fc9e7a1f442 # actions/download-artifact@v4.3.0
         with:
-          toolchain: nightly
-          target: x86_64-unknown-linux-musl
-          args: "--locked --release"
-          working-directory: packages/gse-engine
-          strip: true
-
-      - name: Build gse-engine sidecar binaries (windows-x64)
-        uses: houseabsolute/actions-rust-cross@9a1618ffb70e8374ab5f48fcccea3ebeacf57971 # v1.0.5
-        with:
-          toolchain: nightly
-          target: x86_64-pc-windows-gnu
-          args: "--locked --release"
-          working-directory: packages/gse-engine
-          strip: true
-
-      - name: Build gse-engine sidecar binaries (macos-arm64)
-        uses: houseabsolute/actions-rust-cross@9a1618ffb70e8374ab5f48fcccea3ebeacf57971 # v1.0.5
-        with:
-          toolchain: nightly
-          target: aarch64-apple-darwin
-          args: "--locked --release"
-          working-directory: packages/gse-engine
-          strip: true
-
-      - name: Stage sidecar binaries into the plugin bundle
-        run: |
-          mkdir -p plugin-bundle/sidecars/linux-x64 plugin-bundle/sidecars/windows-x64 plugin-bundle/sidecars/macos-arm64
-          cp packages/gse-engine/target/x86_64-unknown-linux-musl/release/gse-engine plugin-bundle/sidecars/linux-x64/gse-engine
-          cp packages/gse-engine/target/x86_64-pc-windows-msvc/release/gse-engine.exe plugin-bundle/sidecars/windows-x64/gse-engine.exe
-          cp packages/gse-engine/target/aarch64-apple-darwin/release/gse-engine plugin-bundle/sidecars/macos-arm64/gse-engine
+          pattern: sidecar-*
+          path: plugin-bundle/sidecars
+          merge-multiple: true
 
       - name: Record sidecar digests in the bundle manifest
         run: node scripts/sidecar-manifest.mjs
