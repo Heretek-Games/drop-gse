@@ -69,6 +69,7 @@ test("DropGseClientPlugin initializes and registers its surfaces", async () => {
   assert.ok(ctx.registeredSlots.has("game-detail:actions"));
   assert.ok(hook(ctx, "pre-launch:validate"));
   assert.ok(hook(ctx, "pre-launch:stage"));
+  assert.ok(hook(ctx, "pre-launch:network-post"));
   assert.ok(hook(ctx, "post-exit:restore"));
 });
 
@@ -252,6 +253,102 @@ test("post-exit restore returns the original binary and removes config", async (
   assert.ok(
     ctx.serverRequestLog.calls.some((c) => c.method === "DELETE" && c.path === "/rooms/r1"),
   );
+});
+
+test("network-post refreshes custom_broadcasts with newly assigned mesh addresses", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  // Stage-3 bootstrap state: only the launching client had an address so far.
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  ctx.serverRequestLog.setResponse("GET", "/rooms/r1", {
+    room: makeRoom({
+      members: [
+        { userId: "u1", meshAddress: "10.242.1.20", joinedAt: 1 },
+        { userId: "u2", meshAddress: "10.242.1.21", joinedAt: 2 },
+        { userId: "u3", meshAddress: "10.242.1.22", joinedAt: 3 },
+      ],
+    }),
+  });
+
+  await hook(ctx, "pre-launch:network-post").execute(LAUNCH);
+
+  assert.ok(ctx.serverRequestLog.calls.some((c) => c.method === "GET" && c.path === "/rooms/r1"));
+
+  const broadcasts = new TextDecoder().decode(
+    ctx.gameFs.files.get(`42:${CUSTOM_BROADCASTS_FILE}`)!,
+  );
+  assert.equal(broadcasts, "10.242.1.20\n10.242.1.21\n10.242.1.22\n");
+
+  const settingsBroadcasts = new TextDecoder().decode(
+    ctx.gameFs.files.get(`42:${STEAM_SETTINGS_BROADCASTS_FILE}`)!,
+  );
+  assert.equal(settingsBroadcasts, "10.242.1.20:47584\n10.242.1.21:47584\n10.242.1.22:47584\n");
+
+  const settingsIni = new TextDecoder().decode(ctx.gameFs.files.get(`42:${STEAM_SETTINGS_INI}`)!);
+  assert.match(settingsIni, /peer_count=3/);
+
+  const stored = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
+  assert.deepEqual(stored?.peers, ["10.242.1.20", "10.242.1.21", "10.242.1.22"]);
+});
+
+test("network-post keeps the staged broadcast list when no new addresses appeared", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  ctx.serverRequestLog.setResponse("GET", "/rooms/r1", { room: makeRoom() });
+
+  await hook(ctx, "pre-launch:network-post").execute(LAUNCH);
+
+  assert.equal(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`), false);
+  assert.equal(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_BROADCASTS_FILE}`), false);
+
+  const stored = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
+  assert.deepEqual(stored?.peers, ["10.242.1.20", "10.242.1.21"]);
+});
+
+test("network-post is best-effort when the room is unavailable", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  // No canned response: the route resolves empty, so the staged list is kept.
+
+  await hook(ctx, "pre-launch:network-post").execute(LAUNCH);
+
+  assert.equal(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`), false);
+  const stored = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
+  assert.deepEqual(stored?.peers, ["10.242.1.20", "10.242.1.21"]);
+});
+
+test("full launch pipeline has refreshed broadcasts on disk at spawn time", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  await new DropGseClientPlugin().init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  ctx.serverRequestLog.setResponse("GET", "/rooms/r1", {
+    room: makeRoom({
+      members: [
+        { userId: "u1", meshAddress: "10.242.1.20", joinedAt: 1 },
+        { userId: "u2", meshAddress: "10.242.1.21", joinedAt: 2 },
+        { userId: "u3", meshAddress: "10.242.1.22", joinedAt: 3 },
+      ],
+    }),
+  });
+
+  // launchFn runs after every pre-launch stage (stage -> network ->
+  // network-post) and before post-exit teardown, so assertions made inside it
+  // see exactly what the spawned game process would see.
+  let broadcastsAtSpawn = "";
+  let iniAtSpawn = "";
+  await ctx.executeLaunchPipeline(LAUNCH, async () => {
+    broadcastsAtSpawn = new TextDecoder().decode(
+      ctx.gameFs.files.get(`42:${CUSTOM_BROADCASTS_FILE}`) ?? new Uint8Array(),
+    );
+    iniAtSpawn = new TextDecoder().decode(
+      ctx.gameFs.files.get(`42:${STEAM_SETTINGS_INI}`) ?? new Uint8Array(),
+    );
+  });
+
+  assert.match(broadcastsAtSpawn, /10\.242\.1\.22/);
+  assert.match(iniAtSpawn, /peer_count=3/);
 });
 
 const DEFINITIONS = JSON.stringify([{ name: "ACH_A" }, { name: "ACH_B" }]);

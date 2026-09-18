@@ -173,6 +173,13 @@ function toActiveRoom(room: MemberRoom, isHost?: boolean, gameDir?: string): Act
   };
 }
 
+/** Order-insensitive peer-address comparison for refresh short-circuiting. */
+function samePeers(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((peer) => set.has(peer));
+}
+
 /**
  * Paths (relative to the game directory) where Goldberg-family emulators keep
  * runtime unlock state. `configuredPath` comes from the user's own
@@ -429,6 +436,11 @@ export class DropGseClientPlugin implements ClientPlugin {
       stage: "pre-launch:stage",
       order: 10,
       execute: (launch) => this.stage(ctx, launch),
+    });
+    ctx.registerLaunchHook({
+      stage: "pre-launch:network-post",
+      order: 50,
+      execute: (launch) => this.refreshBroadcasts(ctx, launch),
     });
     ctx.registerLaunchHook({
       stage: "post-exit:restore",
@@ -720,6 +732,86 @@ export class DropGseClientPlugin implements ClientPlugin {
     await this.stageAchievementSaves(ctx, launch);
     this.startHeartbeat(ctx, room.roomId);
     ctx.logger.info(`Staged GSE config for room ${room.roomId}`);
+  }
+
+  /**
+   * Gap C (broadcast race) fix. `pre-launch:stage` freezes
+   * `custom_broadcasts.txt` from peers cached in client storage, but the
+   * ZeroTier mesh addresses are only assigned during `pre-launch:network`.
+   * This hook runs after the network stage and right before the game process
+   * spawns: it re-fetches the room, and when the assigned mesh addresses
+   * differ from the staged ones, rewrites the broadcast files and the staged
+   * room state.
+   *
+   * Best-effort by design: a failed refresh still launches with the
+   * stage-3 bootstrap list rather than aborting the game.
+   */
+  private async refreshBroadcasts(ctx: ClientPluginContext, launch: LaunchContext): Promise<void> {
+    const room = await this.activeRoom(ctx, launch.gameId);
+    if (!room) return;
+
+    let freshPeers: string[] = room.peers;
+    try {
+      // Brief retry: the mesh address is assigned by the server right after
+      // the ZeroTier plugin's join hook reports the node, so one or two
+      // short waits cover the provisioning race.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const res = await ctx.serverRequest<{ room: MemberRoom }>(
+          "GET",
+          `/rooms/${encodeURIComponent(room.roomId)}`,
+        );
+        const members = res?.room?.members ?? [];
+        const addresses = members
+          .map((member) => member.meshAddress)
+          .filter((address): address is string => Boolean(address));
+        if (addresses.length > 0) {
+          freshPeers = addresses;
+          break;
+        }
+      }
+    } catch (err) {
+      ctx.logger.warn(
+        `GSE broadcast refresh failed for room ${room.roomId}; keeping staged peer list: ${String(err)}`,
+      );
+      return;
+    }
+
+    if (samePeers(freshPeers, room.peers)) {
+      ctx.logger.debug(`GSE broadcast list already current for room ${room.roomId}`);
+      return;
+    }
+
+    // Rewrite the broadcast files (root + steam_settings/) and the staged
+    // room state. Binaries stay patched from `pre-launch:stage`; only the
+    // Goldberg discovery config changes.
+    const broadcastContent = renderCustomBroadcasts(freshPeers);
+    await ctx.gameFs
+      .writeFile(launch.gameId, STEAM_SETTINGS_BROADCASTS_FILE, broadcastContent)
+      .catch(() => {});
+    await ctx.gameFs
+      .writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${freshPeers.join("\n")}\n`)
+      .catch(() => {});
+    await ctx.gameFs
+      .writeFile(
+        launch.gameId,
+        STEAM_SETTINGS_INI,
+        [
+          "[Settings]",
+          `room_id=${room.roomId}`,
+          `version_id=${room.versionId}`,
+          `peer_count=${freshPeers.length}`,
+          "",
+        ].join("\n"),
+      )
+      .catch(() => {});
+
+    await ctx.storage.set(ACTIVE_ROOM_KEY, { ...room, peers: freshPeers });
+    ctx.logger.info(
+      `Refreshed GSE broadcasts for room ${room.roomId}: ${room.peers.length} -> ${freshPeers.length} peers`,
+    );
   }
 
   /**
