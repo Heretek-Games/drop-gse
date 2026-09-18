@@ -117,7 +117,8 @@ fn cmd_patch(args: &[String]) -> Result<serde_json::Value, String> {
         targets,
         broadcast_peers: list_flag(args, "--peers"),
     };
-    let report = apply_plan(&plan, &game_dir, emulator_dir.as_deref()).map_err(|error| error.to_string())?;
+    let report =
+        apply_plan(&plan, &game_dir, emulator_dir.as_deref()).map_err(|error| error.to_string())?;
 
     Ok(serde_json::json!({
         "patched": report.patched,

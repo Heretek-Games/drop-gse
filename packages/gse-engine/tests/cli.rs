@@ -178,7 +178,11 @@ fn patch_without_emulator_dir_does_not_cross_copy_root_dll_over_nested_targets()
 
     let json: serde_json::Value = serde_json::from_slice(&patch.stdout).unwrap();
     let patched = json["patched"].as_array().unwrap();
-    assert!(patched.is_empty(), "expected patched to be empty when no emulator-dir is provided, but got: {:?}", patched);
+    assert!(
+        patched.is_empty(),
+        "expected patched to be empty when no emulator-dir is provided, but got: {:?}",
+        patched
+    );
 
     assert_eq!(
         fs::read(game.path().join("bin/x64/steam_api64.dll")).unwrap(),
@@ -190,4 +194,3 @@ fn patch_without_emulator_dir_does_not_cross_copy_root_dll_over_nested_targets()
         b"ROOT-ORIGINAL"
     );
 }
-
