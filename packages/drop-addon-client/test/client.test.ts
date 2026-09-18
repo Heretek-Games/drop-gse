@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MockClientPluginContext, MockSystemCommand, type LaunchHook } from "@droposs/plugin-sdk";
+import { MockClientPluginContext, type LaunchHook } from "@droposs/plugin-sdk";
 import {
   ACTIVE_ROOM_KEY,
   ACHIEVEMENTS_DEFINITIONS_FILE,
@@ -505,15 +505,7 @@ test("stage uses sidecar.patch when sidecar is available", async () => {
   });
   ctx.systemCommand.setResponse(
     "gse-engine",
-    [
-      "patch",
-      "--game-dir",
-      "/games/42",
-      "--app-id",
-      "480",
-      "--peers",
-      "10.242.1.20,10.242.1.21",
-    ],
+    ["patch", "--game-dir", "/games/42", "--app-id", "480", "--peers", "10.242.1.20,10.242.1.21"],
     {
       code: 0,
       stdout: JSON.stringify({ patched: ["steam_api64.dll"], backedUp: ["steam_api64.dll"] }),
