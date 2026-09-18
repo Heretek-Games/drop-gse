@@ -48,7 +48,7 @@ jobs:
         uses: houseabsolute/actions-rust-cross@9a1618ffb70e8374ab5f48fcccea3ebeacf57971 # v1.0.5
         with:
           toolchain: nightly
-          target: x86_64-pc-windows-msvc
+          target: x86_64-pc-windows-gnu
           args: "--locked --release"
           working-directory: packages/gse-engine
           strip: true
