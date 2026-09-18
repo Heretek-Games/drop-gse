@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MockClientPluginContext, type LaunchHook } from "@droposs/plugin-sdk";
+import { MockClientPluginContext, MockSystemCommand, type LaunchHook } from "@droposs/plugin-sdk";
 import {
   ACTIVE_ROOM_KEY,
   ACHIEVEMENTS_DEFINITIONS_FILE,
@@ -8,6 +8,7 @@ import {
   ACHIEVEMENTS_UNLOCK_PATH,
   CUSTOM_BROADCASTS_FILE,
   DropGseClientPlugin,
+  EXPECTED_SIDECAR_VERSION,
   PORTABLE_SAVE_CONFIG_FILE,
   STEAM_APPID_FILE,
   STEAM_SETTINGS_APPID_FILE,
@@ -15,6 +16,7 @@ import {
   STEAM_SETTINGS_INI,
   STEAM_SETTINGS_INTERFACES_FILE,
   STEAM_SETTINGS_MAIN_INI,
+  sanitizeConfigValue,
   type ActiveRoom,
   type MemberRoom,
 } from "../src/index.js";
@@ -457,4 +459,91 @@ test("stage preserves a pre-existing configs.user.ini and honours its save path"
     new TextDecoder().decode(ctx.gameFs.files.get(`42:${PORTABLE_SAVE_CONFIG_FILE}`)),
     existing,
   );
+});
+
+test("heartbeat timer starts on stage and stops cleanly on teardown", async () => {
+  const ctx = new MockClientPluginContext("drop-gse");
+  const plugin = new DropGseClientPlugin();
+  await plugin.init(ctx);
+
+  // teardown before any stage — no timer was started so it must be a no-op
+  plugin.teardown();
+
+  // Set up active room and stage (which starts the heartbeat timer)
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+  ctx.serverRequestLog.setResponse("POST", "/rooms/r1/heartbeat", { ok: true });
+  await hook(ctx, "pre-launch:stage").execute(LAUNCH);
+
+  // teardown should stop the timer without throwing
+  plugin.teardown();
+
+  // A second teardown must also be safe
+  plugin.teardown();
+});
+
+test("stage uses sidecar.patch when sidecar is available", async () => {
+  const ctx = new MockClientPluginContext("drop-gse", [
+    "ui:slot",
+    "ui:play-action",
+    "game:launch-hook",
+    "game:fs",
+    "game:scan",
+    "client:storage",
+    "client:ws",
+    "system:sidecar",
+    "system:command",
+  ]);
+  const plugin = new DropGseClientPlugin();
+
+  // Register version response BEFORE init() — crash recovery during init also
+  // probes isAvailable(), and the result is TTL-cached. If we register after
+  // init the cache holds 'false' and stage() takes the fallback branch.
+  ctx.systemCommand.setResponse("gse-engine", ["version"], {
+    code: 0,
+    stdout: JSON.stringify({ engine: "gse-engine", version: EXPECTED_SIDECAR_VERSION }),
+    stderr: "",
+  });
+  ctx.systemCommand.setResponse(
+    "gse-engine",
+    [
+      "patch",
+      "--game-dir",
+      "/games/42",
+      "--app-id",
+      "480",
+      "--peers",
+      "10.242.1.20,10.242.1.21",
+    ],
+    {
+      code: 0,
+      stdout: JSON.stringify({ patched: ["steam_api64.dll"], backedUp: ["steam_api64.dll"] }),
+      stderr: "",
+    },
+  );
+
+  await plugin.init(ctx);
+  await ctx.storage.set(ACTIVE_ROOM_KEY, activeRoom());
+
+  await hook(ctx, "pre-launch:stage").execute(LAUNCH);
+
+  // Sidecar branch writes root & legacy files but NOT the steam_settings/ tree
+  // (the engine owns those when it patches directly)
+  assert.ok(ctx.gameFs.files.has(`42:${STEAM_APPID_FILE}`));
+  assert.ok(ctx.gameFs.files.has(`42:${CUSTOM_BROADCASTS_FILE}`));
+  assert.ok(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_INI}`));
+  assert.equal(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_MAIN_INI}`), false);
+  assert.equal(ctx.gameFs.files.has(`42:${STEAM_SETTINGS_BROADCASTS_FILE}`), false);
+
+  // Verify settings.ini contents are sanitized
+  const ini = new TextDecoder().decode(ctx.gameFs.files.get(`42:${STEAM_SETTINGS_INI}`)!);
+  assert.match(ini, /room_id=r1/);
+  assert.match(ini, /version_id=v1/);
+});
+
+test("sanitizeConfigValue strips control characters and '=' that could inject INI entries", () => {
+  assert.equal(sanitizeConfigValue("10.242.1.20"), "10.242.1.20");
+  assert.equal(sanitizeConfigValue("bad\nvalue"), "badvalue");
+  assert.equal(sanitizeConfigValue("key=injection"), "keyinjection");
+  assert.equal(sanitizeConfigValue("line\r\nbreak"), "linebreak");
+  assert.equal(sanitizeConfigValue("tab\there"), "tabhere");
 });

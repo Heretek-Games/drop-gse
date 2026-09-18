@@ -71,6 +71,17 @@ function requireEmulatorBinding(value: unknown): EmulatorBinding {
 }
 
 /**
+ * Rejects mesh-address strings that could inject newlines or INI keys into
+ * config files (`custom_broadcasts.txt`, `settings.ini`).
+ */
+function validateMeshAddress(value: string): void {
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f=]/.test(value)) {
+    throw new Error("invalid meshAddress: contains control characters or '='");
+  }
+}
+
+/**
  * Room registry with distributed-ish host leases, backed by a
  * {@link RoomPersistence} (Postgres in production, plugin storage in tests).
  *
@@ -233,7 +244,10 @@ export class RoomStore {
       const member = room.members.find((entry) => entry.userId === userId);
       if (!member) return room;
       if (nodeId) member.meshNodeId = nodeId;
-      if (address) member.meshAddress = address;
+      if (address) {
+        validateMeshAddress(address);
+        member.meshAddress = address;
+      }
       await this.persistence.saveRoom(room);
       return room;
     });
@@ -255,6 +269,9 @@ export class RoomStore {
       if (!room || room.expiresAt <= this.now()) {
         throw new Error("room not found");
       }
+      if (!room.members.some((m) => m.userId === userId)) {
+        throw new Error("not a room member");
+      }
       this.claimExpiredLease(room);
       if (room.hostUserId === userId) {
         room.hostHeartbeatAt = this.now();
@@ -268,6 +285,12 @@ export class RoomStore {
     return this.withLock(roomId, async () => {
       const room = await this.persistence.getRoom(roomId);
       if (!room) return { closed: false };
+
+      if (!room.members.some((m) => m.userId === userId)) {
+        // Non-member attempted to leave — silently no-op so the caller can
+        // still clean up its client-side state without an error.
+        return { closed: false };
+      }
 
       if (room.hostUserId === userId) {
         this.meshEvents.networkClose(roomId);

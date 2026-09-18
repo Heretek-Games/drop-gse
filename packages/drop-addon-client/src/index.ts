@@ -58,6 +58,15 @@ export function renderCustomBroadcasts(peers: string[]): string {
   return peers.map((peer) => (peer.includes(":") ? peer : `${peer}:47584`)).join("\n") + "\n";
 }
 
+/**
+ * Strips characters that could inject new INI keys or additional broadcast lines.
+ * Applied to any room-derived string written into `steam_settings/` config files.
+ */
+export function sanitizeConfigValue(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\x00-\x1f=]/g, "");
+}
+
 const INTERFACE_PATTERN = /Steam[A-Z][A-Za-z0-9_]*[0-9]{3}/g;
 
 /**
@@ -340,7 +349,13 @@ export async function recoverInterruptedSession(
   }
 
   await ctx.storage.delete(PORTABLE_SAVE_STAGED_KEY).catch(() => {});
-  await ctx.storage.delete(ACTIVE_ROOM_KEY).catch(() => {});
+  // Compare-and-delete: only wipe ACTIVE_ROOM_KEY if it still belongs to the
+  // recovered session. A concurrent hostRoom/joinRoom may have replaced it
+  // with a new room; deleting that would silently break the upcoming launch.
+  const currentRoom = await ctx.storage.get<ActiveRoom>(ACTIVE_ROOM_KEY);
+  if (currentRoom?.roomId === room.roomId) {
+    await ctx.storage.delete(ACTIVE_ROOM_KEY).catch(() => {});
+  }
 
   return { recovered: true, restored, removedStagedConfig };
 }
@@ -654,14 +669,18 @@ export class DropGseClientPlugin implements ClientPlugin {
       await sidecar.patch({
         gameDir: launch.gameDir,
         appId: room.appId ?? 480,
-        peers: room.peers,
+        peers: room.peers.map(sanitizeConfigValue),
       });
 
       // Write root & legacy files for maximum compatibility
       const appidContent = `${room.appId ?? ""}\n`;
       await ctx.gameFs.writeFile(launch.gameId, STEAM_APPID_FILE, appidContent).catch(() => {});
       await ctx.gameFs
-        .writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${room.peers.join("\n")}\n`)
+        .writeFile(
+          launch.gameId,
+          CUSTOM_BROADCASTS_FILE,
+          `${room.peers.map(sanitizeConfigValue).join("\n")}\n`,
+        )
         .catch(() => {});
       await ctx.gameFs
         .writeFile(
@@ -669,8 +688,8 @@ export class DropGseClientPlugin implements ClientPlugin {
           STEAM_SETTINGS_INI,
           [
             "[Settings]",
-            `room_id=${room.roomId}`,
-            `version_id=${room.versionId}`,
+            `room_id=${sanitizeConfigValue(room.roomId)}`,
+            `version_id=${sanitizeConfigValue(room.versionId)}`,
             `peer_count=${room.peers.length}`,
             "",
           ].join("\n"),
@@ -700,7 +719,7 @@ export class DropGseClientPlugin implements ClientPlugin {
         );
       }
 
-      const broadcasts = renderCustomBroadcasts(room.peers);
+      const broadcasts = renderCustomBroadcasts(room.peers.map(sanitizeConfigValue));
       const mainIni = renderConfigsMainIni();
       const appidContent = `${room.appId ?? ""}\n`;
 
@@ -714,15 +733,15 @@ export class DropGseClientPlugin implements ClientPlugin {
       await ctx.gameFs.writeFile(
         launch.gameId,
         CUSTOM_BROADCASTS_FILE,
-        `${room.peers.join("\n")}\n`,
+        `${room.peers.map(sanitizeConfigValue).join("\n")}\n`,
       );
       await ctx.gameFs.writeFile(
         launch.gameId,
         STEAM_SETTINGS_INI,
         [
           "[Settings]",
-          `room_id=${room.roomId}`,
-          `version_id=${room.versionId}`,
+          `room_id=${sanitizeConfigValue(room.roomId)}`,
+          `version_id=${sanitizeConfigValue(room.versionId)}`,
           `peer_count=${room.peers.length}`,
           "",
         ].join("\n"),
@@ -787,12 +806,13 @@ export class DropGseClientPlugin implements ClientPlugin {
     // Rewrite the broadcast files (root + steam_settings/) and the staged
     // room state. Binaries stay patched from `pre-launch:stage`; only the
     // Goldberg discovery config changes.
-    const broadcastContent = renderCustomBroadcasts(freshPeers);
+    const sanitizedPeers = freshPeers.map(sanitizeConfigValue);
+    const broadcastContent = renderCustomBroadcasts(sanitizedPeers);
     await ctx.gameFs
       .writeFile(launch.gameId, STEAM_SETTINGS_BROADCASTS_FILE, broadcastContent)
       .catch(() => {});
     await ctx.gameFs
-      .writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${freshPeers.join("\n")}\n`)
+      .writeFile(launch.gameId, CUSTOM_BROADCASTS_FILE, `${sanitizedPeers.join("\n")}\n`)
       .catch(() => {});
     await ctx.gameFs
       .writeFile(
@@ -800,8 +820,8 @@ export class DropGseClientPlugin implements ClientPlugin {
         STEAM_SETTINGS_INI,
         [
           "[Settings]",
-          `room_id=${room.roomId}`,
-          `version_id=${room.versionId}`,
+          `room_id=${sanitizeConfigValue(room.roomId)}`,
+          `version_id=${sanitizeConfigValue(room.versionId)}`,
           `peer_count=${freshPeers.length}`,
           "",
         ].join("\n"),

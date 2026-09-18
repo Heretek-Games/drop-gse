@@ -1,19 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { MockSystemCommand } from "@droposs/plugin-sdk";
-import { GseSidecar } from "../src/sidecar.js";
+import { GseSidecar, EXPECTED_SIDECAR_VERSION } from "../src/sidecar.js";
 
 test("GseSidecar.isAvailable returns true when engine version probe succeeds", async () => {
   const system = new MockSystemCommand();
   system.setResponse("gse-engine", ["version"], {
     code: 0,
-    stdout: JSON.stringify({ engine: "gse-engine", version: "0.3.0" }),
+    stdout: JSON.stringify({ engine: "gse-engine", version: EXPECTED_SIDECAR_VERSION }),
     stderr: "",
   });
 
   const sidecar = new GseSidecar(system);
   assert.equal(await sidecar.isAvailable(), true);
-  // Second call uses cached result
+  // Second call within TTL uses cached result
   assert.equal(await sidecar.isAvailable(), true);
   assert.equal(system.calls.length, 1);
 });
@@ -48,6 +48,40 @@ test("GseSidecar.isAvailable returns false when system is undefined or probe fai
   });
   const sidecarWrongEngine = new GseSidecar(systemWrongEngine);
   assert.equal(await sidecarWrongEngine.isAvailable(), false);
+});
+
+test("GseSidecar.isAvailable rejects a sidecar reporting a different version", async () => {
+  // A rogue PATH-local binary claiming to be gse-engine but with an older version
+  const system = new MockSystemCommand();
+  system.setResponse("gse-engine", ["version"], {
+    code: 0,
+    stdout: JSON.stringify({ engine: "gse-engine", version: "0.1.0" }),
+    stderr: "",
+  });
+  const sidecar = new GseSidecar(system);
+  assert.equal(await sidecar.isAvailable(), false);
+});
+
+test("GseSidecar.isAvailable re-probes after resetAvailability clears the cache", async () => {
+  const system = new MockSystemCommand();
+  system.setResponse("gse-engine", ["version"], {
+    code: 0,
+    stdout: JSON.stringify({ engine: "gse-engine", version: EXPECTED_SIDECAR_VERSION }),
+    stderr: "",
+  });
+  const sidecar = new GseSidecar(system);
+
+  assert.equal(await sidecar.isAvailable(), true);
+  assert.equal(system.calls.length, 1); // one probe so far
+
+  // Within TTL — no additional probe
+  assert.equal(await sidecar.isAvailable(), true);
+  assert.equal(system.calls.length, 1);
+
+  // Reset clears the cache, forcing a fresh probe on next call
+  sidecar.resetAvailability();
+  assert.equal(await sidecar.isAvailable(), true);
+  assert.equal(system.calls.length, 2); // probed again
 });
 
 test("GseSidecar.scan invokes gse-engine scan and parses result", async () => {

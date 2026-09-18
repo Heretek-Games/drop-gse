@@ -179,6 +179,31 @@ test("leave non-host announces memberLeave; host close tears the network down", 
   assert.equal(await store.get(room.id), undefined);
 });
 
+test("heartbeat by a non-member is rejected with not a room member", async () => {
+  const { store } = setup();
+  const room = await createRoom(store);
+  await assert.rejects(store.heartbeat(room.id, "stranger"), /not a room member/);
+  // The room must be unmodified — host is still the host
+  const fetched = await store.get(room.id);
+  assert.equal(fetched?.hostUserId, "host");
+  assert.equal(fetched?.members.length, 1);
+});
+
+test("leave by a non-member is a silent no-op with no state mutation or events", async () => {
+  const { store, sink } = setup();
+  const room = await createRoom(store);
+  await store.join(room.id, "guest");
+  const leavesBefore = sink.leaves.length;
+
+  const result = await store.leave(room.id, "stranger");
+  assert.equal(result.closed, false);
+  assert.equal(result.room, undefined);
+  assert.equal(sink.leaves.length, leavesBefore); // no memberLeave event emitted
+
+  const fetched = await store.get(room.id);
+  assert.equal(fetched?.members.length, 2); // host + guest unchanged
+});
+
 test("pruneExpired closes expired rooms", async () => {
   const { store, sink, setNow } = setup();
   const room = await createRoom(store);

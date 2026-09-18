@@ -39,6 +39,15 @@ export interface GseInterfacesResult {
 }
 
 /**
+ * Expected sidecar engine version — must stay in sync with
+ * `packages/gse-engine/Cargo.toml` `[package] version`.
+ *
+ * Pinning the expected version in the probe prevents a rogue PATH-local
+ * `gse-engine` binary from shadowing the SHA-256-verified staged copy.
+ */
+export const EXPECTED_SIDECAR_VERSION = "0.3.1";
+
+/**
  * Client wrapper around the native `gse-engine` sidecar CLI.
  *
  * Invokes allowlisted `gse-engine` subcommands through `ctx.system.run()`.
@@ -46,19 +55,32 @@ export interface GseInterfacesResult {
  */
 export class GseSidecar {
   private available: boolean | undefined;
+  private availableCheckedAt: number | undefined;
+  /** Re-probe after this many milliseconds so binaries installed post-boot are picked up. */
+  private static readonly AVAILABILITY_CACHE_TTL_MS = 60_000;
 
   constructor(private readonly system?: ClientPluginSystem) {}
 
   /**
    * Probes whether the native `gse-engine` sidecar is present, allowlisted,
-   * and functional. Caches the result for the lifetime of this instance.
+   * and functional. Caches the result for up to 60 seconds.
+   *
+   * The probe verifies both the `engine` discriminator and the `version` field
+   * against {@link EXPECTED_SIDECAR_VERSION} so a PATH-shadowing binary that
+   * claims to be `gse-engine` but reports a different version is rejected.
    */
   async isAvailable(): Promise<boolean> {
-    if (this.available !== undefined) {
+    const now = Date.now();
+    if (
+      this.available !== undefined &&
+      this.availableCheckedAt !== undefined &&
+      now - this.availableCheckedAt < GseSidecar.AVAILABILITY_CACHE_TTL_MS
+    ) {
       return this.available;
     }
     if (!this.system || typeof this.system.run !== "function") {
       this.available = false;
+      this.availableCheckedAt = Date.now();
       return false;
     }
 
@@ -66,13 +88,15 @@ export class GseSidecar {
       const res = await this.system.run("gse-engine", ["version"], { timeoutMs: 3000 });
       if (res.code === 0 && res.stdout.trim().length > 0) {
         const parsed = JSON.parse(res.stdout) as Partial<GseVersionResult>;
-        this.available = parsed.engine === "gse-engine";
+        this.available =
+          parsed.engine === "gse-engine" && parsed.version === EXPECTED_SIDECAR_VERSION;
       } else {
         this.available = false;
       }
     } catch {
       this.available = false;
     }
+    this.availableCheckedAt = Date.now();
     return this.available;
   }
 
@@ -81,6 +105,7 @@ export class GseSidecar {
    */
   resetAvailability(): void {
     this.available = undefined;
+    this.availableCheckedAt = undefined;
   }
 
   /**
